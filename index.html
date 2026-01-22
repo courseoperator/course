@@ -36,7 +36,7 @@
     <h2 style="margin:0;">課程碼查詢課綱（PDF）+ 翻譯</h2>
     <div class="hint">
       輸入四位數課程碼，例如 <code>0576</code>，即可顯示對應課綱 PDF。<br/>
-      你可以在 PDF 畫面反白文字後按「複製」，再按「貼上」到原文框，最後按「翻譯」。
+      翻譯方式：在 PDF 內反白後按 <code>Ctrl+C</code> 複製 → 回到原文框按 <code>Ctrl+V</code> 貼上 → 按「翻譯」。
     </div>
   </header>
 
@@ -71,18 +71,16 @@
           <option value="de">Deutsch</option>
         </select>
 
-        <!-- ✅ 你要的三顆按鈕 -->
-        <button id="btnCopyFromPdf" type="button">複製</button>
-        <button id="btnPasteToSource" type="button">貼上</button>
+        <!-- ✅ 只保留翻譯按鈕 -->
         <button id="btnTranslate" type="button">翻譯</button>
-
-        <button id="btnCopyTranslated" type="button">複製翻譯結果</button>
       </div>
 
       <div class="panel">
         <div class="box">
-          <div class="small">擷取出的原文（可手動修正後再翻譯）</div>
-          <textarea id="sourceText" placeholder="在 PDF 反白文字後按「複製」，再按「貼上」到這裡"></textarea>
+          <div class="small">
+            請由 PDF 檔中進行反白複製（Ctrl+C），並貼在此處（Ctrl+V），再按「翻譯」。
+          </div>
+          <textarea id="sourceText" placeholder="請由 PDF 檔中進行反白複製（Ctrl+C），並貼在此處（Ctrl+V），再按「翻譯」。"></textarea>
         </div>
         <div class="box">
           <div class="small">翻譯結果</div>
@@ -91,7 +89,7 @@
       </div>
 
       <div class="small" style="margin-top:8px;">
-        提醒：PDF 內反白複製通常受瀏覽器/檔案內容影響；若「複製」被瀏覽器阻擋，請先在 PDF 內按 Ctrl+C，再用「貼上」即可。
+        提醒：Windows 貼上是 <code>Ctrl+V</code>（不是 Ctrl+P）。Mac 是 <code>⌘+V</code>。
       </div>
     </div>
   </main>
@@ -148,8 +146,8 @@
           return;
         }
 
-        const rawPath = entry.file;           // 可能含空格
-        const encodedPath = encodeURI(rawPath); // ✅ 避免空格造成問題
+        const rawPath = entry.file;              // 可能含空格
+        const encodedPath = encodeURI(rawPath);  // ✅ 避免空格造成問題
 
         const title = entry.title_zh ? `｜${entry.title_zh}` : '';
         document.getElementById('meta').textContent = `課程碼：${code} ${title}（檔案：${rawPath}）`;
@@ -159,7 +157,7 @@
         document.getElementById('sourceText').value = '';
         document.getElementById('translatedText').value = '';
 
-        setStatus('已載入 PDF。請在 PDF 反白文字後按「複製」。', 'ok');
+        setStatus('已載入 PDF。請在 PDF 反白複製（Ctrl+C）後貼到原文框，再按「翻譯」。', 'ok');
         showSections(true);
 
       } catch (err) {
@@ -179,50 +177,7 @@
       showSections(false);
     }
 
-    // ====== 你要的三顆按鈕功能 ======
-
-    // 1) 複製：嘗試從「目前使用者反白的文字」複製到剪貼簿
-    async function copySelectionToClipboard() {
-      try {
-        // 注意：若反白在 iframe(PDF) 內，某些瀏覽器安全限制可能讓這裡讀不到 selection
-        // 因此我們提供兩條路：
-        // (A) 先嘗試用 window.getSelection()
-        // (B) 若取不到，提示使用者在 PDF 內按 Ctrl+C
-        const selected = window.getSelection ? String(window.getSelection()) : "";
-
-        if (selected && selected.trim()) {
-          await navigator.clipboard.writeText(selected);
-          setStatus(`已複製選取文字（${selected.trim().length} 字）。接著按「貼上」。`, 'ok');
-          return;
-        }
-
-        setStatus('未偵測到可複製的反白文字。若你是在 PDF 內反白，請直接按 Ctrl+C，再按「貼上」。', 'error');
-      } catch (e) {
-        console.error(e);
-        setStatus('複製失敗：瀏覽器可能阻擋剪貼簿存取。請在 PDF 內用 Ctrl+C，然後按「貼上」。', 'error');
-      }
-    }
-
-    // 2) 貼上：從剪貼簿讀取文字，貼到「擷取原文」框
-    async function pasteFromClipboardToSource() {
-      const ta = document.getElementById('sourceText');
-      try {
-        const text = await navigator.clipboard.readText();
-        if (!text) {
-          setStatus('剪貼簿沒有文字可貼上。', 'error');
-          return;
-        }
-        // 追加貼上（你也可改成覆蓋：ta.value = text;）
-        ta.value = ta.value ? (ta.value + "\n" + text) : text;
-        ta.focus();
-        setStatus(`已貼上（${text.length} 字）。可再按「翻譯」。`, 'ok');
-      } catch (e) {
-        console.error(e);
-        setStatus('貼上失敗：瀏覽器可能不允許讀取剪貼簿。你可以直接在原文框按 Ctrl+V。', 'error');
-      }
-    }
-
-    // 3) 翻譯：把原文框內容送到 Apps Script 翻譯，顯示在翻譯框
+    // ====== 翻譯：分段送到 Apps Script ======
     function chunkText(text, maxChars = 2000) {
       const chunks = [];
       let i = 0;
@@ -253,7 +208,7 @@
     async function translateAll() {
       const src = document.getElementById('sourceText').value.trim();
       if (!src) {
-        setStatus('原文框沒有內容。請先「貼上」或手動輸入文字。', 'error');
+        setStatus('原文框沒有內容。請先由 PDF 反白複製（Ctrl+C）並貼上（Ctrl+V）。', 'error');
         return;
       }
 
@@ -280,29 +235,10 @@
       }
     }
 
-    async function copyTranslated() {
-      const text = document.getElementById('translatedText').value;
-      if (!text) {
-        setStatus('目前沒有翻譯結果可複製。', 'error');
-        return;
-      }
-      try {
-        await navigator.clipboard.writeText(text);
-        setStatus('已複製翻譯結果。', 'ok');
-      } catch (e) {
-        console.error(e);
-        setStatus('複製翻譯結果失敗：瀏覽器可能阻擋剪貼簿存取。', 'error');
-      }
-    }
-
     // ====== 綁定事件 ======
     document.getElementById('btnSearch').addEventListener('click', lookup);
     document.getElementById('btnClear').addEventListener('click', clearAll);
-
-    document.getElementById('btnCopyFromPdf').addEventListener('click', copySelectionToClipboard);
-    document.getElementById('btnPasteToSource').addEventListener('click', pasteFromClipboardToSource);
     document.getElementById('btnTranslate').addEventListener('click', translateAll);
-    document.getElementById('btnCopyTranslated').addEventListener('click', copyTranslated);
 
     document.getElementById('courseCode').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') lookup();
