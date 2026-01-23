@@ -5,10 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>課程碼查詢課綱（PDF）+ 翻譯</title>
 
-  <!-- ✅ 本機 PDF.js（請確認 repo 有這兩個檔案）
-       /vendor/pdfjs/pdf.min.js
-       /vendor/pdfjs/pdf.worker.min.js
-  -->
   <script defer src="./vendor/pdfjs/pdf.min.js"></script>
 
   <style>
@@ -35,10 +31,9 @@
 
     main { height: calc(100vh - 120px); }
 
-    /* ✅ 兩欄各占一半 */
     .layout{
       display:grid;
-      grid-template-columns: 1fr 1fr; /* 50% / 50% */
+      grid-template-columns: 1fr 1fr;
       height:100%;
       gap:12px;
       padding:12px 16px;
@@ -70,11 +65,10 @@
       resize:none;
       font-size:13px; line-height:1.5;
       padding:10px;
-      white-space: pre-wrap;   /* ✅ 保留換行 */
+      white-space: pre-wrap;
       overflow-wrap: anywhere;
     }
 
-    /* ✅ 翻譯卡片內部：原文 30% / 翻譯 70%（保留你之前的格式優化） */
     .split{
       display:grid;
       grid-template-rows: 0.3fr 0.7fr;
@@ -99,25 +93,17 @@
     }
     .box .content{ flex:1; min-height:0; }
 
-    /* ✅ 翻譯結果更好讀 */
     #translatedText { line-height: 1.7; }
 
     code { background:#f3f3f3; padding:2px 6px; border-radius: 4px; }
 
-    /* ✅ 手機版：上下排列（各占整行） */
     @media (max-width: 900px) {
       main { height: auto; }
-      .layout {
-        grid-template-columns: 1fr;
-        grid-template-rows: auto auto;
-        padding: 10px 12px;
-      }
+      .layout { grid-template-columns: 1fr; grid-template-rows: auto auto; padding: 10px 12px; }
       .topbar { gap: 8px; }
       input { width: 100%; }
-
       #pdfCard .card-body { height: 55vh; }
       #transCard .card-body { height: 65vh; }
-
       .split { grid-template-rows: 0.35fr 0.65fr; }
     }
 
@@ -136,8 +122,7 @@
 <header>
   <h2>課程碼查詢課綱（PDF）+ 翻譯</h2>
   <div class="hint">
-    流程：載入 PDF → 一鍵複製（盡量保留段落/換行）→ 一鍵貼上 → 翻譯（保留段落格式，方便對照）。
-    若一鍵擷取失敗，仍可手動：PDF 內 <code>Ctrl+C</code> → 原文框 <code>Ctrl+V</code>。
+    ✅ 已做「批次翻譯」加速：多段合併成少數請求，翻譯後再切回段落，方便對照。
   </div>
 
   <div class="topbar">
@@ -171,7 +156,6 @@
 
 <main>
   <div class="layout">
-    <!-- 左：PDF（50%） -->
     <div id="pdfCard" class="card">
       <div id="meta" class="card-header">尚未載入 PDF</div>
       <div class="card-body">
@@ -179,7 +163,6 @@
       </div>
     </div>
 
-    <!-- 右：翻譯（50%） -->
     <div id="transCard" class="card">
       <div class="card-header">翻譯區（原文/翻譯可對照）</div>
       <div class="card-body">
@@ -203,12 +186,13 @@
   const TRANSLATE_ENDPOINT =
     "https://script.google.com/macros/s/AKfycbzmMkx32IfB9rT9x3XIubiGv4RbRyWdzj9m2hdwFftQuQ7VrQupVrA9OUSeXlF-PB8qyA/exec";
 
-  // PDF.js 本機 worker（請確認路徑存在）
   let pdfJsReady = false;
-
   let indexData = null;
   let currentPdfUrl = null;
   let extractedPdfText = "";
+
+  // ✅ 批次翻譯參數：越大越少次請求，但單次太大可能超過 GAS/翻譯限制
+  const BATCH_CHAR_LIMIT = 3500; // 建議 2500~4500 間調整
 
   function setStatus(msg, type='') {
     const el = document.getElementById('status');
@@ -232,19 +216,12 @@
   async function lookup() {
     try {
       const code = (document.getElementById('courseCode').value || '').trim();
-      if (code.length !== 4) {
-        setStatus('請輸入四位數課程碼', 'error');
-        return;
-      }
+      if (code.length !== 4) return setStatus('請輸入四位數課程碼', 'error');
 
       setStatus('查詢中…');
       const idx = await loadIndex();
       const entry = idx[code];
-
-      if (!entry || !entry.file) {
-        setStatus('查無此課程碼（請確認 index.json）', 'error');
-        return;
-      }
+      if (!entry || !entry.file) return setStatus('查無此課程碼（請確認 index.json）', 'error');
 
       const rawPath = entry.file;
       const encodedPath = encodeURI(rawPath);
@@ -260,7 +237,7 @@
       document.getElementById('translatedText').value = '';
 
       setStatus(pdfJsReady
-        ? 'PDF 已載入。可按「一鍵複製」擷取全文（盡量保留段落）。'
+        ? 'PDF 已載入。可按「一鍵複製」擷取全文（保留段落）。'
         : 'PDF 已載入，但 PDF.js 未就緒（請確認 vendor/pdfjs 檔案存在）。',
         'ok'
       );
@@ -270,14 +247,8 @@
     }
   }
 
-  // ====== ✅ 文字擷取的「段落/換行」保留策略 ======
-  // PDF.js 的 getTextContent 會給 items，每個 item 有 transform 位置。
-  // 我們用「行」與「段落」規則：
-  // - 同一頁：依 y 座標分群成行（y 相近視為同一行）
-  // - 行與行之間若距離很大 → 視為段落空行
-  // - 同一行內：若 x 距離很大 → 加空格（避免字黏在一起）
+  // ===== PDF 擷取：保留行/段落 =====
   function normalizeTextForTranslation(text) {
-    // 保留換行；同時把過多空白壓縮
     return (text || '')
       .replace(/[ \t]+\n/g, '\n')
       .replace(/\n[ \t]+/g, '\n')
@@ -286,61 +257,44 @@
       .trim();
   }
 
+  function averageY(lineTokens) {
+    const sum = lineTokens.reduce((acc, t) => acc + t.y, 0);
+    return sum / Math.max(1, lineTokens.length);
+  }
+
   async function extractAllTextFromPdfWithLayout(pdfUrl) {
     const absUrl = new URL(pdfUrl, window.location.href).href;
-
     const loadingTask = window.pdfjsLib.getDocument({ url: absUrl });
     const pdf = await loadingTask.promise;
 
     let full = "";
-
     for (let p = 1; p <= pdf.numPages; p++) {
       setStatus(`擷取 PDF 文字中…（第 ${p}/${pdf.numPages} 頁）`);
       const page = await pdf.getPage(p);
       const tc = await page.getTextContent();
 
-      // 取出含座標的 tokens
-      // transform = [a, b, c, d, e, f]，其中 e=x, f=y
       const tokens = tc.items
         .filter(it => (it.str || '').trim().length > 0 && it.transform && it.transform.length >= 6)
-        .map(it => ({
-          str: it.str,
-          x: it.transform[4],
-          y: it.transform[5]
-        }));
+        .map(it => ({ str: it.str, x: it.transform[4], y: it.transform[5] }));
 
-      if (tokens.length === 0) {
-        full += "\n\n";
-        continue;
-      }
+      if (tokens.length === 0) { full += "\n\n"; continue; }
 
-      // 依 y（由上到下）排序，再依 x（由左到右）排序
-      tokens.sort((a, b) => {
-        // y 大通常代表更上面（PDF 座標系可能不同，但大多可用）
-        if (b.y !== a.y) return b.y - a.y;
-        return a.x - b.x;
-      });
+      tokens.sort((a, b) => (b.y !== a.y) ? (b.y - a.y) : (a.x - b.x));
 
-      // 分群：y 相近為同一行
-      const lineThreshold = 2.5; // y 差距 <= 2.5 視為同一行（可微調）
+      const lineThreshold = 2.5;
       const lines = [];
       let currentLine = [tokens[0]];
 
       for (let i = 1; i < tokens.length; i++) {
         const prev = tokens[i - 1];
         const cur = tokens[i];
-        if (Math.abs(cur.y - prev.y) <= lineThreshold) {
-          currentLine.push(cur);
-        } else {
-          lines.push(currentLine);
-          currentLine = [cur];
-        }
+        if (Math.abs(cur.y - prev.y) <= lineThreshold) currentLine.push(cur);
+        else { lines.push(currentLine); currentLine = [cur]; }
       }
       lines.push(currentLine);
 
-      // 將每行轉成文字：依 x 排序、用間距補空格
       const lineTexts = [];
-      const paragraphBreaks = []; // 記錄行間距，判斷是否插入空行
+      const paragraphBreaks = [];
 
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].slice().sort((a, b) => a.x - b.x);
@@ -348,105 +302,159 @@
 
         for (let j = 0; j < line.length; j++) {
           const t = line[j];
-          if (j === 0) {
-            lt += t.str;
-          } else {
+          if (j === 0) lt += t.str;
+          else {
             const prev = line[j - 1];
             const gap = t.x - prev.x;
-            // 若字塊水平距離大，補空格；避免黏字
             if (gap > 8) lt += " ";
             lt += t.str;
           }
         }
-
         lineTexts.push(lt.trim());
 
-        // 行距判斷：與下一行 y 差距大 → 段落
         if (i < lines.length - 1) {
-          const yThis = averageY(lines[i]);
-          const yNext = averageY(lines[i + 1]);
-          const dy = Math.abs(yThis - yNext);
+          const dy = Math.abs(averageY(lines[i]) - averageY(lines[i + 1]));
           paragraphBreaks.push(dy);
         }
       }
 
-      // 將行組合，插入段落空行
-      // paragraphDyThreshold：行距大於這個值 → 插入空行（視為段落分隔）
-      const paragraphDyThreshold = 12; // 可微調，越大越不容易插段落
-
+      const paragraphDyThreshold = 12;
       let pageText = "";
       for (let i = 0; i < lineTexts.length; i++) {
         pageText += lineTexts[i] + "\n";
-        if (i < paragraphBreaks.length && paragraphBreaks[i] > paragraphDyThreshold) {
-          pageText += "\n"; // 段落空行
-        }
+        if (i < paragraphBreaks.length && paragraphBreaks[i] > paragraphDyThreshold) pageText += "\n";
       }
 
-      full += pageText.trimEnd() + "\n\n"; // 每頁後空行
+      full += pageText.trimEnd() + "\n\n";
     }
 
     return normalizeTextForTranslation(full);
   }
 
-  function averageY(lineTokens) {
-    const sum = lineTokens.reduce((acc, t) => acc + t.y, 0);
-    return sum / Math.max(1, lineTokens.length);
-  }
-
-  // ====== 段落切分與排版（保留先前的翻譯格式優化） ======
+  // ====== 文字切段 ======
   function splitIntoParagraphs(text) {
     const t = (text || '').replace(/\r\n/g, '\n').trim();
-
-    // 用空行切段（與原文對照最重要）
     let paras = t.split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
 
-    // 若真的沒有空行，再退而求其次
     if (paras.length <= 1) {
       const lines = t.split('\n').map(s => s.trim()).filter(Boolean);
       paras = [];
       let buf = '';
       for (const line of lines) {
-        if ((buf + ' ' + line).trim().length < 180) {
-          buf = (buf ? (buf + ' ' + line) : line);
-        } else {
-          if (buf) paras.push(buf.trim());
-          buf = line;
-        }
+        if ((buf + ' ' + line).trim().length < 180) buf = (buf ? (buf + ' ' + line) : line);
+        else { if (buf) paras.push(buf.trim()); buf = line; }
       }
       if (buf) paras.push(buf.trim());
     }
-
     return paras;
   }
 
+  // ====== 翻譯：POST JSON + fallback GET ======
   async function translateChunk(source, targetLang) {
-    const res = await fetch(TRANSLATE_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ text: source, target_lang: targetLang })
-    });
+    const payload = { text: source, target_lang: targetLang };
 
-    if (!res.ok) {
-      const t = await res.text();
-      throw new Error(`翻譯失敗（HTTP ${res.status}）：${t.slice(0, 200)}`);
-    }
+    // POST
+    try {
+      const res = await fetch(TRANSLATE_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
 
-    const ct = (res.headers.get('content-type') || '').toLowerCase();
-    if (ct.includes('application/json')) {
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      return data.translated_text || '';
-    } else {
-      return (await res.text()) || '';
+      const raw = await res.text();
+      if (!res.ok) throw new Error(`POST HTTP ${res.status}: ${raw.slice(0, 160)}`);
+
+      try {
+        const data = JSON.parse(raw);
+        const out = data.translated_text ?? data.translation ?? data.translated ?? data.output ?? data.result ?? '';
+        if (!out) throw new Error('POST 回傳無翻譯欄位');
+        return String(out);
+      } catch {
+        if (!raw.trim()) throw new Error('POST 回傳為空');
+        return raw;
+      }
+    } catch (postErr) {
+      // GET fallback
+      const url = new URL(TRANSLATE_ENDPOINT);
+      url.searchParams.set('text', source);
+      url.searchParams.set('target_lang', targetLang);
+
+      const res = await fetch(url.toString(), { method: 'GET', cache: 'no-store' });
+      const raw = await res.text();
+      if (!res.ok) throw new Error(`GET HTTP ${res.status}: ${raw.slice(0, 160)}（原 POST：${postErr.message}）`);
+
+      try {
+        const data = JSON.parse(raw);
+        const out = data.translated_text ?? data.translation ?? data.translated ?? data.output ?? data.result ?? '';
+        if (!out) throw new Error('GET 回傳無翻譯欄位');
+        return String(out);
+      } catch {
+        if (!raw.trim()) throw new Error('GET 回傳為空');
+        return raw;
+      }
     }
   }
 
+  // ✅ 批次打包：多段合併成少數 requests（核心加速）
+  function packParagraphs(paras) {
+    // 使用「不太會被翻譯改掉」的分隔符
+    // 這個 token 幾乎不會出現在課綱內容，也通常會原樣保留
+    const makeSep = (i) => `<<<P${String(i).padStart(4,'0')}>>>`;
+
+    const batches = [];
+    let current = { text: '', meta: [] }; // meta: [{startIndex, sep, paraIndex}]
+    for (let i = 0; i < paras.length; i++) {
+      const sep = makeSep(i);
+      const piece = (current.text ? "\n\n" : "") + sep + "\n" + paras[i];
+
+      if ((current.text + piece).length > BATCH_CHAR_LIMIT && current.text) {
+        batches.push(current);
+        current = { text: sep + "\n" + paras[i], meta: [{ sep, paraIndex: i }] };
+      } else {
+        current.text += piece;
+        current.meta.push({ sep, paraIndex: i });
+      }
+    }
+    if (current.text) batches.push(current);
+    return { batches, makeSep };
+  }
+
+  function unpackBySeparators(translatedBatchText, expectedMeta) {
+    // 用 sep 把結果切回去
+    // 策略：先把所有 sep 做成可 split 的標記，再找每段內容
+    const outMap = new Map();
+
+    // 確保每個 separator 存在
+    for (const m of expectedMeta) {
+      const idx = translatedBatchText.indexOf(m.sep);
+      // 若 separator 被破壞（少見），就讓它回退為整批內容
+      if (idx === -1) return null;
+    }
+
+    // 以每個 sep 的出現位置排序切段
+    const points = expectedMeta.map(m => ({
+      sep: m.sep,
+      paraIndex: m.paraIndex,
+      pos: translatedBatchText.indexOf(m.sep)
+    })).sort((a,b)=>a.pos-b.pos);
+
+    for (let i = 0; i < points.length; i++) {
+      const start = points[i].pos + points[i].sep.length;
+      const end = (i < points.length - 1) ? points[i+1].pos : translatedBatchText.length;
+      let chunk = translatedBatchText.slice(start, end);
+
+      // 去掉開頭的換行與可能殘留的 ">>>" 後換行
+      chunk = chunk.replace(/^\s*\n/, '').trim();
+      outMap.set(points[i].paraIndex, chunk);
+    }
+
+    return outMap;
+  }
+
+  // ✅ 批次翻譯主流程
   async function translateAll() {
     const src = (document.getElementById('sourceText').value || '').trim();
-    if (!src) {
-      setStatus('請先貼上原文內容（或用「一鍵貼上」）。', 'error');
-      return;
-    }
+    if (!src) return setStatus('請先貼上原文內容（或用「一鍵貼上」）。', 'error');
 
     const lang = document.getElementById('lang').value;
     const btn = document.getElementById('btnTranslate');
@@ -454,100 +462,79 @@
 
     try {
       const paras = splitIntoParagraphs(src);
+      if (paras.length === 0) return setStatus('原文沒有可翻譯內容。', 'error');
 
-      // 避免超長段落：用句子切小段（不硬切字元）
-      const chunks = [];
-      for (const p of paras) {
-        if (p.length <= 2500) {
-          chunks.push(p);
-        } else {
-          const sentences = p.split(/(?<=[。．！!?])\s+/);
-          let buf = '';
-          for (const s of sentences) {
-            if ((buf + ' ' + s).trim().length <= 2400) {
-              buf = (buf ? buf + ' ' + s : s);
-            } else {
-              if (buf) chunks.push(buf.trim());
-              buf = s;
-            }
+      // 1) 打包成批次
+      const { batches } = packParagraphs(paras);
+
+      // 2) 逐批翻譯（請求次數大幅減少）
+      const translatedParas = new Array(paras.length).fill('');
+
+      for (let b = 0; b < batches.length; b++) {
+        setStatus(`批次翻譯中…（批次 ${b + 1}/${batches.length}，含 ${batches[b].meta.length} 段）`);
+        const translatedBatch = await translateChunk(batches[b].text, lang);
+
+        const map = unpackBySeparators(translatedBatch, batches[b].meta);
+        if (!map) {
+          // fallback：若分隔符被破壞，就退回「逐段翻譯」以確保正確
+          setStatus(`分隔符被改寫，啟動保守模式逐段翻譯…（批次 ${b + 1}/${batches.length}）`);
+          for (const m of batches[b].meta) {
+            const t = await translateChunk(paras[m.paraIndex], lang);
+            translatedParas[m.paraIndex] = t.trim();
           }
-          if (buf) chunks.push(buf.trim());
+        } else {
+          for (const [idx, val] of map.entries()) {
+            translatedParas[idx] = (val || '').trim();
+          }
         }
       }
 
-      let out = '';
-      for (let i = 0; i < chunks.length; i++) {
-        setStatus(`翻譯中…（段落 ${i + 1}/${chunks.length}）`);
-        const translated = await translateChunk(chunks[i], lang);
-        out += translated.trim() + '\n\n'; // ✅ 段落空行，便於對照
-      }
-
-      document.getElementById('translatedText').value = out.trim();
-      setStatus('翻譯完成（已保留段落格式，方便對照）', 'ok');
+      // 3) 組回去（段落空行）
+      document.getElementById('translatedText').value = translatedParas.filter(Boolean).join("\n\n");
+      setStatus(`翻譯完成 ✅（段落 ${paras.length} → 請求 ${batches.length} 次，速度會明顯提升）`, 'ok');
 
     } catch (e) {
       console.error(e);
       setStatus(`翻譯失敗：${e.message}`, 'error');
-
     } finally {
       btn.disabled = false;
     }
   }
 
-  // ====== 一鍵複製/貼上 ======
+  // ===== 一鍵複製/貼上 =====
   async function oneClickCopy() {
-    if (!pdfJsReady) {
-      setStatus('PDF.js 未就緒（請確認 ./vendor/pdfjs/ 兩個檔案存在）。', 'error');
-      return;
-    }
-    if (!currentPdfUrl) {
-      setStatus('請先查詢並載入 PDF，再使用「一鍵複製」。', 'error');
-      return;
-    }
+    if (!pdfJsReady) return setStatus('PDF.js 未就緒（請確認 ./vendor/pdfjs/ 兩個檔案存在）。', 'error');
+    if (!currentPdfUrl) return setStatus('請先查詢並載入 PDF，再使用「一鍵複製」。', 'error');
 
     const btnCopy = document.getElementById('btnOneClickCopy');
     const btnPaste = document.getElementById('btnOneClickPaste');
-    btnCopy.disabled = true;
-    btnPaste.disabled = true;
+    btnCopy.disabled = true; btnPaste.disabled = true;
 
     try {
       setStatus('開始擷取 PDF 全文（保留段落/換行）…');
       const text = await extractAllTextFromPdfWithLayout(currentPdfUrl);
-
-      if (!text) {
-        extractedPdfText = "";
-        setStatus('擷取結果為空：可能是掃描型 PDF 或文字不可擷取。', 'error');
-        return;
-      }
+      if (!text) return setStatus('擷取結果為空：可能是掃描型 PDF 或文字不可擷取。', 'error');
 
       extractedPdfText = text;
 
       try {
         await navigator.clipboard.writeText(extractedPdfText);
-        setStatus(`一鍵複製完成：已寫入剪貼簿（保留段落/換行，約 ${extractedPdfText.length} 字）。也可按「一鍵貼上」。`, 'ok');
-      } catch (clipErr) {
-        console.warn(clipErr);
-        setStatus(`已擷取全文（保留段落/換行，約 ${extractedPdfText.length} 字），但瀏覽器阻擋寫入剪貼簿。仍可按「一鍵貼上」。`, 'ok');
+        setStatus(`一鍵複製完成：已寫入剪貼簿（約 ${extractedPdfText.length} 字）。也可按「一鍵貼上」。`, 'ok');
+      } catch {
+        setStatus(`已擷取全文（約 ${extractedPdfText.length} 字），但瀏覽器阻擋寫入剪貼簿。仍可按「一鍵貼上」。`, 'ok');
       }
     } catch (e) {
       console.error(e);
       extractedPdfText = "";
       setStatus(`一鍵複製失敗：${e.message}`, 'error');
     } finally {
-      btnCopy.disabled = false;
-      btnPaste.disabled = false;
+      btnCopy.disabled = false; btnPaste.disabled = false;
     }
   }
 
   async function oneClickPaste() {
-    if (!pdfJsReady) {
-      setStatus('PDF.js 未就緒（請確認 ./vendor/pdfjs/ 兩個檔案存在）。', 'error');
-      return;
-    }
-    if (!currentPdfUrl) {
-      setStatus('請先查詢並載入 PDF，再使用「一鍵貼上」。', 'error');
-      return;
-    }
+    if (!pdfJsReady) return setStatus('PDF.js 未就緒（請確認 ./vendor/pdfjs/ 兩個檔案存在）。', 'error');
+    if (!currentPdfUrl) return setStatus('請先查詢並載入 PDF，再使用「一鍵貼上」。', 'error');
 
     if (!extractedPdfText) {
       setStatus('尚未擷取全文，先自動擷取…');
@@ -577,10 +564,8 @@
     document.getElementById('btnOneClickCopy').addEventListener('click', oneClickCopy);
     document.getElementById('btnOneClickPaste').addEventListener('click', oneClickPaste);
 
-    // 先禁用
     setOneClickButtonsEnabled(false);
 
-    // 等 pdf.js 載入後初始化 worker（本機）
     const timer = setInterval(() => {
       if (window.pdfjsLib) {
         clearInterval(timer);
@@ -596,9 +581,7 @@
       }
     }, 200);
 
-    setTimeout(() => {
-      if (!pdfJsReady) setOneClickButtonsEnabled(false);
-    }, 3000);
+    setTimeout(() => { if (!pdfJsReady) setOneClickButtonsEnabled(false); }, 3000);
   });
 </script>
 </body>
