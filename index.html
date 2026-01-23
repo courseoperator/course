@@ -70,7 +70,7 @@
       resize:none;
       font-size:13px; line-height:1.5;
       padding:10px;
-      white-space: pre-wrap;   /* ✅ 保留段落換行 */
+      white-space: pre-wrap;   /* ✅ 保留換行 */
       overflow-wrap: anywhere;
     }
 
@@ -136,7 +136,7 @@
 <header>
   <h2>課程碼查詢課綱（PDF）+ 翻譯</h2>
   <div class="hint">
-    流程：載入 PDF →（可選）一鍵複製擷取全文 → 一鍵貼上 → 翻譯（已保留段落格式）。
+    流程：載入 PDF → 一鍵複製（盡量保留段落/換行）→ 一鍵貼上 → 翻譯（保留段落格式，方便對照）。
     若一鍵擷取失敗，仍可手動：PDF 內 <code>Ctrl+C</code> → 原文框 <code>Ctrl+V</code>。
   </div>
 
@@ -181,16 +181,16 @@
 
     <!-- 右：翻譯（50%） -->
     <div id="transCard" class="card">
-      <div class="card-header">翻譯區（保留段落格式）</div>
+      <div class="card-header">翻譯區（原文/翻譯可對照）</div>
       <div class="card-body">
         <div class="split">
           <div class="box">
-            <div class="label">原文（可手動 Ctrl+V，或用「一鍵貼上」）</div>
+            <div class="label">原文（保留段落/換行）</div>
             <div class="content"><textarea id="sourceText"></textarea></div>
           </div>
 
           <div class="box">
-            <div class="label">翻譯結果</div>
+            <div class="label">翻譯結果（保留段落）</div>
             <div class="content"><textarea id="translatedText"></textarea></div>
           </div>
         </div>
@@ -260,7 +260,7 @@
       document.getElementById('translatedText').value = '';
 
       setStatus(pdfJsReady
-        ? 'PDF 已載入。可按「一鍵複製」擷取全文。'
+        ? 'PDF 已載入。可按「一鍵複製」擷取全文（盡量保留段落）。'
         : 'PDF 已載入，但 PDF.js 未就緒（請確認 vendor/pdfjs 檔案存在）。',
         'ok'
       );
@@ -270,14 +270,137 @@
     }
   }
 
-  // ====== 段落切分與排版（✅保留你要求的格式優化） ======
+  // ====== ✅ 文字擷取的「段落/換行」保留策略 ======
+  // PDF.js 的 getTextContent 會給 items，每個 item 有 transform 位置。
+  // 我們用「行」與「段落」規則：
+  // - 同一頁：依 y 座標分群成行（y 相近視為同一行）
+  // - 行與行之間若距離很大 → 視為段落空行
+  // - 同一行內：若 x 距離很大 → 加空格（避免字黏在一起）
+  function normalizeTextForTranslation(text) {
+    // 保留換行；同時把過多空白壓縮
+    return (text || '')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n[ \t]+/g, '\n')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  async function extractAllTextFromPdfWithLayout(pdfUrl) {
+    const absUrl = new URL(pdfUrl, window.location.href).href;
+
+    const loadingTask = window.pdfjsLib.getDocument({ url: absUrl });
+    const pdf = await loadingTask.promise;
+
+    let full = "";
+
+    for (let p = 1; p <= pdf.numPages; p++) {
+      setStatus(`擷取 PDF 文字中…（第 ${p}/${pdf.numPages} 頁）`);
+      const page = await pdf.getPage(p);
+      const tc = await page.getTextContent();
+
+      // 取出含座標的 tokens
+      // transform = [a, b, c, d, e, f]，其中 e=x, f=y
+      const tokens = tc.items
+        .filter(it => (it.str || '').trim().length > 0 && it.transform && it.transform.length >= 6)
+        .map(it => ({
+          str: it.str,
+          x: it.transform[4],
+          y: it.transform[5]
+        }));
+
+      if (tokens.length === 0) {
+        full += "\n\n";
+        continue;
+      }
+
+      // 依 y（由上到下）排序，再依 x（由左到右）排序
+      tokens.sort((a, b) => {
+        // y 大通常代表更上面（PDF 座標系可能不同，但大多可用）
+        if (b.y !== a.y) return b.y - a.y;
+        return a.x - b.x;
+      });
+
+      // 分群：y 相近為同一行
+      const lineThreshold = 2.5; // y 差距 <= 2.5 視為同一行（可微調）
+      const lines = [];
+      let currentLine = [tokens[0]];
+
+      for (let i = 1; i < tokens.length; i++) {
+        const prev = tokens[i - 1];
+        const cur = tokens[i];
+        if (Math.abs(cur.y - prev.y) <= lineThreshold) {
+          currentLine.push(cur);
+        } else {
+          lines.push(currentLine);
+          currentLine = [cur];
+        }
+      }
+      lines.push(currentLine);
+
+      // 將每行轉成文字：依 x 排序、用間距補空格
+      const lineTexts = [];
+      const paragraphBreaks = []; // 記錄行間距，判斷是否插入空行
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].slice().sort((a, b) => a.x - b.x);
+        let lt = "";
+
+        for (let j = 0; j < line.length; j++) {
+          const t = line[j];
+          if (j === 0) {
+            lt += t.str;
+          } else {
+            const prev = line[j - 1];
+            const gap = t.x - prev.x;
+            // 若字塊水平距離大，補空格；避免黏字
+            if (gap > 8) lt += " ";
+            lt += t.str;
+          }
+        }
+
+        lineTexts.push(lt.trim());
+
+        // 行距判斷：與下一行 y 差距大 → 段落
+        if (i < lines.length - 1) {
+          const yThis = averageY(lines[i]);
+          const yNext = averageY(lines[i + 1]);
+          const dy = Math.abs(yThis - yNext);
+          paragraphBreaks.push(dy);
+        }
+      }
+
+      // 將行組合，插入段落空行
+      // paragraphDyThreshold：行距大於這個值 → 插入空行（視為段落分隔）
+      const paragraphDyThreshold = 12; // 可微調，越大越不容易插段落
+
+      let pageText = "";
+      for (let i = 0; i < lineTexts.length; i++) {
+        pageText += lineTexts[i] + "\n";
+        if (i < paragraphBreaks.length && paragraphBreaks[i] > paragraphDyThreshold) {
+          pageText += "\n"; // 段落空行
+        }
+      }
+
+      full += pageText.trimEnd() + "\n\n"; // 每頁後空行
+    }
+
+    return normalizeTextForTranslation(full);
+  }
+
+  function averageY(lineTokens) {
+    const sum = lineTokens.reduce((acc, t) => acc + t.y, 0);
+    return sum / Math.max(1, lineTokens.length);
+  }
+
+  // ====== 段落切分與排版（保留先前的翻譯格式優化） ======
   function splitIntoParagraphs(text) {
     const t = (text || '').replace(/\r\n/g, '\n').trim();
 
-    // 先用空行切段
+    // 用空行切段（與原文對照最重要）
     let paras = t.split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
 
-    // 若幾乎沒有空行，就用單行換行切，再合併短行
+    // 若真的沒有空行，再退而求其次
     if (paras.length <= 1) {
       const lines = t.split('\n').map(s => s.trim()).filter(Boolean);
       paras = [];
@@ -308,7 +431,6 @@
       throw new Error(`翻譯失敗（HTTP ${res.status}）：${t.slice(0, 200)}`);
     }
 
-    // 兼容 json / text
     const ct = (res.headers.get('content-type') || '').toLowerCase();
     if (ct.includes('application/json')) {
       const data = await res.json();
@@ -357,11 +479,11 @@
       for (let i = 0; i < chunks.length; i++) {
         setStatus(`翻譯中…（段落 ${i + 1}/${chunks.length}）`);
         const translated = await translateChunk(chunks[i], lang);
-        out += translated.trim() + '\n\n'; // ✅ 段落空行
+        out += translated.trim() + '\n\n'; // ✅ 段落空行，便於對照
       }
 
       document.getElementById('translatedText').value = out.trim();
-      setStatus('翻譯完成（已保留段落格式）', 'ok');
+      setStatus('翻譯完成（已保留段落格式，方便對照）', 'ok');
 
     } catch (e) {
       console.error(e);
@@ -372,24 +494,7 @@
     }
   }
 
-  // ====== PDF.js 擷取全文（供一鍵複製/貼上） ======
-  async function extractAllTextFromPdf(pdfUrl) {
-    const absUrl = new URL(pdfUrl, window.location.href).href;
-
-    const loadingTask = window.pdfjsLib.getDocument({ url: absUrl });
-    const pdf = await loadingTask.promise;
-
-    let full = "";
-    for (let p = 1; p <= pdf.numPages; p++) {
-      setStatus(`擷取 PDF 文字中…（第 ${p}/${pdf.numPages} 頁）`);
-      const page = await pdf.getPage(p);
-      const content = await page.getTextContent();
-      const strings = content.items.map(it => it.str);
-      full += strings.join(" ") + "\n\n";
-    }
-    return full.trim();
-  }
-
+  // ====== 一鍵複製/貼上 ======
   async function oneClickCopy() {
     if (!pdfJsReady) {
       setStatus('PDF.js 未就緒（請確認 ./vendor/pdfjs/ 兩個檔案存在）。', 'error');
@@ -406,8 +511,8 @@
     btnPaste.disabled = true;
 
     try {
-      setStatus('開始擷取 PDF 全文…（頁數多可能需要一些時間）');
-      const text = await extractAllTextFromPdf(currentPdfUrl);
+      setStatus('開始擷取 PDF 全文（保留段落/換行）…');
+      const text = await extractAllTextFromPdfWithLayout(currentPdfUrl);
 
       if (!text) {
         extractedPdfText = "";
@@ -419,10 +524,10 @@
 
       try {
         await navigator.clipboard.writeText(extractedPdfText);
-        setStatus(`一鍵複製完成：已寫入剪貼簿（約 ${extractedPdfText.length} 字）。也可按「一鍵貼上」。`, 'ok');
+        setStatus(`一鍵複製完成：已寫入剪貼簿（保留段落/換行，約 ${extractedPdfText.length} 字）。也可按「一鍵貼上」。`, 'ok');
       } catch (clipErr) {
         console.warn(clipErr);
-        setStatus(`已擷取全文（約 ${extractedPdfText.length} 字），但瀏覽器阻擋寫入剪貼簿。仍可按「一鍵貼上」。`, 'ok');
+        setStatus(`已擷取全文（保留段落/換行，約 ${extractedPdfText.length} 字），但瀏覽器阻擋寫入剪貼簿。仍可按「一鍵貼上」。`, 'ok');
       }
     } catch (e) {
       console.error(e);
@@ -451,7 +556,7 @@
     }
 
     document.getElementById('sourceText').value = extractedPdfText;
-    setStatus('一鍵貼上完成：全文已填入原文區。可直接按「翻譯」。', 'ok');
+    setStatus('一鍵貼上完成：已保留原 PDF 段落/換行，方便與翻譯結果對照。', 'ok');
   }
 
   function clearAll() {
@@ -491,7 +596,6 @@
       }
     }, 200);
 
-    // 若 3 秒仍未就緒，保持禁用（但不影響 PDF 顯示與翻譯）
     setTimeout(() => {
       if (!pdfJsReady) setOneClickButtonsEnabled(false);
     }, 3000);
