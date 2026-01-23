@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>課程碼查詢課綱（PDF）+ Google 翻譯（快速）</title>
+  <title>課程碼查詢課綱（PDF）+ Google 翻譯（新頁）</title>
 
   <!-- 本機 PDF.js -->
   <script defer src="./vendor/pdfjs/pdf.min.js"></script>
@@ -32,7 +32,7 @@
 
     main { height: calc(100vh - 140px); }
 
-    /* 兩欄各占一半 */
+    /* 兩欄各占一半：左 PDF、右 原文 */
     .layout{
       display:grid;
       grid-template-columns: 1fr 1fr;
@@ -59,6 +59,7 @@
     }
 
     .card-body{ flex:1; min-height:0; }
+
     iframe{ width:100%; height:100%; border:0; }
 
     textarea{
@@ -71,33 +72,6 @@
       overflow-wrap: anywhere;
     }
 
-    /* 翻譯卡片內部：原文 30% / 翻譯 70%（手機版會調整） */
-    .split{
-      display:grid;
-      grid-template-rows: 0.3fr 0.7fr;
-      gap:10px;
-      height:100%;
-      padding:10px;
-    }
-
-    .box{
-      border:1px solid var(--border);
-      border-radius:10px;
-      display:flex;
-      flex-direction:column;
-      min-height:0;
-      overflow:hidden;
-    }
-    .box .label{
-      padding:8px 10px;
-      background:#fafafa;
-      border-bottom:1px solid var(--border);
-      font-size:12.5px;
-    }
-    .box .content{ flex:1; min-height:0; }
-
-    #translatedText { line-height: 1.75; }
-
     code { background:#f3f3f3; padding:2px 6px; border-radius: 4px; }
 
     .mini-hint{
@@ -107,32 +81,38 @@
       line-height: 1.5;
     }
 
+    .right-actions{
+      display:flex;
+      gap:10px;
+      flex-wrap: wrap;
+      padding:10px 10px 0;
+      align-items:center;
+    }
+
     @media (max-width: 900px) {
       main { height: auto; }
       .layout { grid-template-columns: 1fr; grid-template-rows: auto auto; padding: 10px 12px; }
       .topbar { gap: 8px; }
       input { width: 100%; }
       #pdfCard .card-body { height: 55vh; }
-      #transCard .card-body { height: 65vh; }
-      .split { grid-template-rows: 0.35fr 0.65fr; }
+      #textCard .card-body { height: 55vh; }
     }
 
     @media (max-width: 420px) {
       h2 { font-size: 17px; }
       button, select { width: 100%; }
       .topbar { align-items: stretch; }
-      .split { grid-template-rows: 0.4fr 0.6fr; }
       #pdfCard .card-body { height: 50vh; }
-      #transCard .card-body { height: 70vh; }
+      #textCard .card-body { height: 60vh; }
     }
   </style>
 </head>
 
 <body>
 <header>
-  <h2>課程碼查詢課綱（PDF）+ Google 翻譯（快速）</h2>
+  <h2>課程碼查詢課綱（PDF）+ Google 翻譯（新頁）</h2>
   <div class="hint">
-    速度最佳方案：網頁負責「擷取 PDF + 保留段落/換行 + 對照排版」，翻譯交給 <b>Google 翻譯網站</b>（接近你手動貼上的速度）。
+    本頁只做：查詢 PDF、擷取全文（保段落）、並以「新分頁」開啟 Google 翻譯顯示結果。
   </div>
 
   <div class="topbar">
@@ -158,12 +138,11 @@
       <option value="de">Deutsch</option>
     </select>
 
-    <button id="btnOpenGTranslate" type="button">送到 Google 翻譯</button>
-    <button id="btnPasteBackHint" type="button">貼回譯文提示</button>
+    <button id="btnOpenGTranslate" type="button">送到 Google 翻譯（新頁）</button>
   </div>
 
   <div class="mini-hint">
-    建議流程：① 一鍵貼上 → ② 送到 Google 翻譯 → ③ 在 Google 翻譯複製譯文 → ④ 貼回右下「翻譯結果」框。
+    建議流程：① 查詢課程碼載入 PDF → ② 一鍵貼上（把 PDF 擷取文字放到右側原文）→ ③ 送到 Google 翻譯（新分頁顯示譯文）。
   </div>
 
   <div id="status" class="status"></div>
@@ -171,6 +150,7 @@
 
 <main>
   <div class="layout">
+    <!-- 左：PDF -->
     <div id="pdfCard" class="card">
       <div id="meta" class="card-header">尚未載入 PDF</div>
       <div class="card-body">
@@ -178,31 +158,22 @@
       </div>
     </div>
 
-    <div id="transCard" class="card">
-      <div class="card-header">原文 / 翻譯對照</div>
+    <!-- 右：原文（不再顯示翻譯結果欄位） -->
+    <div id="textCard" class="card">
+      <div class="card-header">原文（保留段落/換行）</div>
+      <div class="right-actions">
+        <span class="mini-hint" style="margin:0;">
+          你也可以直接在此貼上原文，再按「送到 Google 翻譯」開新分頁。
+        </span>
+      </div>
       <div class="card-body">
-        <div class="split">
-          <div class="box">
-            <div class="label">原文（保留段落/換行）</div>
-            <div class="content">
-              <textarea id="sourceText" placeholder="可按「一鍵貼上」把 PDF 擷取內容貼進來，或自行貼上原文。"></textarea>
-            </div>
-          </div>
-
-          <div class="box">
-            <div class="label">翻譯結果（請從 Google 翻譯複製貼回）</div>
-            <div class="content">
-              <textarea id="translatedText" placeholder="在 Google 翻譯頁面複製譯文，貼到這裡。"></textarea>
-            </div>
-          </div>
-        </div>
+        <textarea id="sourceText" placeholder="可按「一鍵貼上」把 PDF 擷取內容貼進來，或自行貼上原文。"></textarea>
       </div>
     </div>
   </div>
 </main>
 
 <script>
-  // ===== 基本狀態 =====
   let pdfJsReady = false;
   let indexData = null;
   let currentPdfUrl = null;
@@ -223,7 +194,6 @@
     return (raw || '').replace(/\D/g, '').slice(0, 4);
   }
 
-  // ===== 載入 index.json（課程碼 -> PDF 路徑）=====
   async function loadIndex() {
     if (indexData) return indexData;
     const res = await fetch('./index.json', { cache: 'no-store' });
@@ -232,7 +202,6 @@
     return indexData;
   }
 
-  // ===== 查詢並顯示 PDF =====
   async function lookup() {
     try {
       const inputEl = document.getElementById('courseCode');
@@ -263,12 +232,10 @@
       document.getElementById('meta').textContent =
         `課程碼：${code}${entry.title_zh ? '｜' + entry.title_zh : ''}（檔案：${rawPath}）`;
 
-      // 清空文本框
       document.getElementById('sourceText').value = '';
-      document.getElementById('translatedText').value = '';
 
       setStatus(pdfJsReady
-        ? 'PDF 已載入。可按「一鍵複製（保段落）」擷取全文。'
+        ? 'PDF 已載入。可按「一鍵複製（保段落）」擷取全文，或直接按「一鍵貼上」。'
         : 'PDF 已載入，但 PDF.js 未就緒（請確認 vendor/pdfjs 檔案存在）。',
         'ok'
       );
@@ -278,7 +245,6 @@
     }
   }
 
-  // ===== PDF 文字擷取（保留段落/換行）=====
   function normalizeTextForReadability(text) {
     return (text || '')
       .replace(/[ \t]+\n/g, '\n')
@@ -310,7 +276,6 @@
 
       if (tokens.length === 0) { full += "\n\n"; continue; }
 
-      // 先依 y 再依 x 排序
       tokens.sort((a, b) => (b.y !== a.y) ? (b.y - a.y) : (a.x - b.x));
 
       const lineThreshold = 2.5;
@@ -379,12 +344,11 @@
 
       extractedPdfText = text;
 
-      // 嘗試寫入剪貼簿（可能被瀏覽器阻擋）
       try {
         await navigator.clipboard.writeText(extractedPdfText);
-        setStatus(`一鍵複製完成：已寫入剪貼簿（約 ${extractedPdfText.length} 字）。可按「一鍵貼上」或直接 Ctrl+V。`, 'ok');
+        setStatus(`一鍵複製完成：已寫入剪貼簿（約 ${extractedPdfText.length} 字）。`, 'ok');
       } catch {
-        setStatus(`已擷取全文（約 ${extractedPdfText.length} 字），但瀏覽器阻擋寫入剪貼簿。可按「一鍵貼上」。`, 'ok');
+        setStatus(`已擷取全文（約 ${extractedPdfText.length} 字），但瀏覽器阻擋寫入剪貼簿。`, 'ok');
       }
     } catch (e) {
       console.error(e);
@@ -406,20 +370,21 @@
     }
 
     document.getElementById('sourceText').value = extractedPdfText;
-    setStatus('一鍵貼上完成：原文已放入「原文框」（保留段落/換行）。', 'ok');
+    setStatus('一鍵貼上完成：原文已放入右側欄位。接著可按「送到 Google 翻譯（新頁）」。', 'ok');
   }
 
-  // ===== ✅ 送到 Google 翻譯（速度最佳）=====
+  // ✅ 維持「送到 Google 翻譯」作法：開新頁顯示翻譯
   function openGoogleTranslate() {
     const src = (document.getElementById('sourceText').value || '').trim();
     if (!src) return setStatus('請先有原文（可用一鍵貼上）再送到 Google 翻譯。', 'error');
 
     const tl = document.getElementById('lang').value || 'en';
-    const sl = 'zh-TW';
+    const sl = 'auto';
 
-    // Google Translate 以 URL 帶 text 會有長度限制：超過就只帶前段並提示分段貼上
+    // URL 長度限制：過長會失敗；保守截斷並提示使用者分段貼上
     const MAX_URL_TEXT = 3800;
-    const text = src.length > MAX_URL_TEXT ? src.slice(0, MAX_URL_TEXT) : src;
+    const clipped = src.length > MAX_URL_TEXT;
+    const text = clipped ? src.slice(0, MAX_URL_TEXT) : src;
 
     const url = new URL('https://translate.google.com/');
     url.searchParams.set('sl', sl);
@@ -429,20 +394,16 @@
 
     window.open(url.toString(), '_blank', 'noopener');
 
-    if (src.length > MAX_URL_TEXT) {
+    if (clipped) {
       setStatus(
-        `已開啟 Google 翻譯（因網址長度限制，只帶入前 ${MAX_URL_TEXT} 字）。\n` +
-        `建議：在 Google 翻譯頁面中，把剩餘原文分段貼上翻譯，再把譯文貼回右下框。`,
+        `已開啟 Google 翻譯新分頁（sl=auto → tl=${tl}）。\n` +
+        `⚠️ 因網址長度限制，只帶入前 ${MAX_URL_TEXT} 字。\n` +
+        `建議：在 Google 翻譯頁面中，把剩餘原文「分段貼上」翻譯。`,
         'ok'
       );
     } else {
-      setStatus('已開啟 Google 翻譯分頁。翻譯完成後，複製譯文貼回右下「翻譯結果」框。', 'ok');
+      setStatus(`已開啟 Google 翻譯新分頁（sl=auto → tl=${tl}）。`, 'ok');
     }
-  }
-
-  function pasteBackHint() {
-    document.getElementById('translatedText').focus();
-    setStatus('提示：請從 Google 翻譯頁面複製譯文，貼到右下「翻譯結果」框。', 'ok');
   }
 
   function clearAll() {
@@ -450,24 +411,18 @@
     document.getElementById('pdfFrame').src = '';
     document.getElementById('meta').textContent = '尚未載入 PDF';
     document.getElementById('sourceText').value = '';
-    document.getElementById('translatedText').value = '';
     extractedPdfText = '';
     currentPdfUrl = null;
     setStatus('');
   }
 
-  // ===== 初始化 PDF.js =====
   window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btnSearch').addEventListener('click', lookup);
     document.getElementById('btnClear').addEventListener('click', clearAll);
-
     document.getElementById('btnOneClickCopy').addEventListener('click', oneClickCopy);
     document.getElementById('btnOneClickPaste').addEventListener('click', oneClickPaste);
-
     document.getElementById('btnOpenGTranslate').addEventListener('click', openGoogleTranslate);
-    document.getElementById('btnPasteBackHint').addEventListener('click', pasteBackHint);
 
-    // Enter 直接查詢
     document.getElementById('courseCode').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') lookup();
     });
