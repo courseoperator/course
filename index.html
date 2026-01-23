@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>課程碼查詢課綱（PDF）+ Google 翻譯（新頁）</title>
+  <title>課程碼查詢課綱多語翻譯</title>
 
   <!-- 本機 PDF.js -->
   <script defer src="./vendor/pdfjs/pdf.min.js"></script>
@@ -112,7 +112,7 @@
 <header>
   <h2>課程碼查詢課綱（PDF）+ Google 翻譯（新頁）</h2>
   <div class="hint">
-    本頁提供：查詢 PDF、擷取全文、並以「新分頁」開啟 Google 翻譯顯示結果。
+    本頁提供：查詢課綱、並以「新分頁」顯示多語翻譯結果。
   </div>
 
   <div class="topbar">
@@ -138,11 +138,11 @@
       <option value="de">Deutsch</option>
     </select>
 
-    <button id="btnOpenGTranslate" type="button">送到 Google 翻譯</button>
+    <button id="btnOpenGTranslate" type="button">一鍵翻譯</button>
   </div>
 
   <div class="mini-hint">
-    建議流程：① 查詢課程碼載入 PDF → ② 一鍵貼上 → ③ 翻譯（新分頁顯示譯文）。
+    建議流程：① 輸入課程碼 ② 一鍵貼上 ③ 一鍵翻譯
   </div>
 
   <div id="status" class="status"></div>
@@ -163,11 +163,11 @@
       <div class="card-header">原文（保留段落/換行）</div>
       <div class="right-actions">
         <span class="mini-hint" style="margin:0;">
-          也可以直接在此複製與貼上原文，再按「送到 Google 翻譯」開新分頁。
+          也可直接在此複製與貼上原文，再按「一鍵翻譯」。
         </span>
       </div>
       <div class="card-body">
-        <textarea id="sourceText" placeholder="可按「一鍵貼上」把 PDF 擷取內容貼進來，或自行貼上原文。"></textarea>
+        <textarea id="sourceText" placeholder="可按「一鍵貼上」把課綱擷取進來，也可自行複製貼上原文。"></textarea>
       </div>
     </div>
   </div>
