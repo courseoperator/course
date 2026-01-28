@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>課程碼查詢課綱多語翻譯</title>
+  <title>課綱查詢多語翻譯（R編號 / 選課代碼）</title>
 
   <!-- 本機 PDF.js -->
   <script defer src="./vendor/pdfjs/pdf.min.js"></script>
@@ -22,7 +22,7 @@
     .hint { color: var(--muted); font-size: 13px; line-height: 1.45; }
 
     .topbar { display:flex; gap:10px; flex-wrap: wrap; align-items:center; margin-top: 10px; }
-    input { padding: 10px 12px; font-size: 16px; width: 220px; max-width: 100%; }
+    input { padding: 10px 12px; font-size: 16px; width: 260px; max-width: 100%; }
     button, select { padding: 10px 12px; font-size: 15px; cursor: pointer; }
     button:disabled { opacity: .55; cursor: not-allowed; }
 
@@ -56,6 +56,8 @@
       border-bottom:1px solid var(--border);
       background:#fafafa;
       font-size:13px;
+      line-height: 1.4;
+      white-space: pre-wrap;
     }
 
     .card-body{ flex:1; min-height:0; }
@@ -110,13 +112,13 @@
 
 <body>
 <header>
-  <h2>課程碼查詢課綱（PDF）+ Google 翻譯（新頁）</h2>
+  <h2>課綱查詢（PDF）+ Google 翻譯（新頁）</h2>
   <div class="hint">
-    本頁提供：查詢課綱、並以「新分頁」顯示多語翻譯結果。
+    可用 <code>R001</code>（編號）或 <code>0621</code>（4位選課代碼）查詢課綱 PDF，右側可擷取原文並送到 Google 翻譯新分頁。
   </div>
 
   <div class="topbar">
-    <input id="courseCode" inputmode="numeric" placeholder="輸入課程碼（四位數）" maxlength="4" />
+    <input id="courseCode" placeholder="輸入 R001 或 4位選課代碼（例如 0621）" />
     <button id="btnSearch" type="button">查詢</button>
     <button id="btnClear" type="button">清除</button>
 
@@ -142,7 +144,7 @@
   </div>
 
   <div class="mini-hint">
-    建議流程：① 輸入課程碼 ② 一鍵貼上 ③ 一鍵翻譯
+    建議流程：① 查詢（R編號/選課代碼）② 一鍵貼上 ③ 一鍵翻譯
   </div>
 
   <div id="status" class="status"></div>
@@ -158,7 +160,7 @@
       </div>
     </div>
 
-    <!-- 右：原文（不再顯示翻譯結果欄位） -->
+    <!-- 右：原文（不顯示翻譯結果欄位） -->
     <div id="textCard" class="card">
       <div class="card-header">原文（保留段落/換行）</div>
       <div class="right-actions">
@@ -176,6 +178,10 @@
 <script>
   let pdfJsReady = false;
   let indexData = null;
+
+  // 反查表：course_code(4位數) -> [Rxxx...]
+  let courseCodeMap = null;
+
   let currentPdfUrl = null;
   let extractedPdfText = "";
 
@@ -190,264 +196,78 @@
     document.getElementById('btnOneClickPaste').disabled = !enabled;
   }
 
-  function sanitizeCode(raw) {
-    return (raw || '').replace(/\D/g, '').slice(0, 4);
+  function normalizeQuery(raw) {
+    const s = (raw || '').trim();
+    if (!s) return '';
+    return s.toUpperCase();
+  }
+
+  function isRCode(q) {
+    return /^R\d{3,4}$/.test(q);
+  }
+
+  function isCourseCode4(q) {
+    return /^\d{4}$/.test(q);
   }
 
   async function loadIndex() {
     if (indexData) return indexData;
+
     const res = await fetch('./index.json', { cache: 'no-store' });
     if (!res.ok) throw new Error('無法載入 index.json（請確認存在於 repo 根目錄）');
     indexData = await res.json();
+
+    // 建 course_code 反查表（只建一次）
+    courseCodeMap = new Map();
+    for (const [rid, entry] of Object.entries(indexData)) {
+      const cc = (entry && entry.course_code) ? String(entry.course_code).trim() : '';
+      if (!/^\d{4}$/.test(cc)) continue;
+      if (!courseCodeMap.has(cc)) courseCodeMap.set(cc, []);
+      courseCodeMap.get(cc).push(rid);
+    }
+
     return indexData;
+  }
+
+  function buildMetaText(rid, entry, queryUsed) {
+    const parts = [];
+
+    // 第一行：中文名 + 英文名
+    const zh = entry.title_zh || '';
+    const en = entry.title_en || '';
+    parts.push(`${zh}${en ? " / " + en : ""}`.trim() || '（未命名課程）');
+
+    // 第二行：學院/系所/學制
+    const line2 = [entry.college, entry.department, entry.program].filter(Boolean).join("｜");
+    if (line2) parts.push(line2);
+
+    // 第三行：編號/選課代碼/檔案
+    const cc = entry.course_code ? String(entry.course_code).trim() : '';
+    const file = entry.file || '';
+    const qNote = queryUsed ? `（查詢：${queryUsed}）` : '';
+    parts.push(`編號：${rid}${cc ? "｜選課代碼：" + cc : ""}${qNote}\n檔案：${file}`);
+
+    return parts.join("\n");
   }
 
   async function lookup() {
     try {
       const inputEl = document.getElementById('courseCode');
-      const code = sanitizeCode(inputEl.value);
-      inputEl.value = code;
+      const q = normalizeQuery(inputEl.value);
+      inputEl.value = q;
 
-      if (code.length !== 4) {
-        setStatus('請輸入四位數課程碼。', 'error');
+      if (!q) {
+        setStatus('請輸入 R編號（例如 R001）或 4位選課代碼（例如 0621）。', 'error');
         return;
       }
 
       setStatus('查詢中…');
       const idx = await loadIndex();
-      const entry = idx[code];
 
-      if (!entry || !entry.file) {
-        setStatus(`查無課程碼 ${code} 的課綱檔案。請確認 index.json 是否已加入此課程碼。`, 'error');
-        return;
-      }
+      let rid = null;
+      let entry = null;
 
-      const rawPath = entry.file;
-      const filePath = encodeURI(rawPath);
-
-      currentPdfUrl = filePath;
-      extractedPdfText = "";
-
-      document.getElementById('pdfFrame').src = filePath;
-      document.getElementById('meta').textContent =
-        `課程碼：${code}${entry.title_zh ? '｜' + entry.title_zh : ''}（檔案：${rawPath}）`;
-
-      document.getElementById('sourceText').value = '';
-
-      setStatus(pdfJsReady
-        ? 'PDF 已載入。可按「一鍵複製」擷取全文，或直接按「一鍵貼上」。'
-        : 'PDF 已載入，但 PDF.js 未就緒（請確認 vendor/pdfjs 檔案存在）。',
-        'ok'
-      );
-    } catch (err) {
-      console.error(err);
-      setStatus(`發生錯誤：${err.message}`, 'error');
-    }
-  }
-
-  function normalizeTextForReadability(text) {
-    return (text || '')
-      .replace(/[ \t]+\n/g, '\n')
-      .replace(/\n[ \t]+/g, '\n')
-      .replace(/[ \t]{2,}/g, ' ')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-  }
-
-  function averageY(lineTokens) {
-    const sum = lineTokens.reduce((acc, t) => acc + t.y, 0);
-    return sum / Math.max(1, lineTokens.length);
-  }
-
-  async function extractAllTextFromPdfWithLayout(pdfUrl) {
-    const absUrl = new URL(pdfUrl, window.location.href).href;
-    const loadingTask = window.pdfjsLib.getDocument({ url: absUrl });
-    const pdf = await loadingTask.promise;
-
-    let full = "";
-    for (let p = 1; p <= pdf.numPages; p++) {
-      setStatus(`擷取 PDF 文字中…（第 ${p}/${pdf.numPages} 頁）`);
-      const page = await pdf.getPage(p);
-      const tc = await page.getTextContent();
-
-      const tokens = tc.items
-        .filter(it => (it.str || '').trim().length > 0 && it.transform && it.transform.length >= 6)
-        .map(it => ({ str: it.str, x: it.transform[4], y: it.transform[5] }));
-
-      if (tokens.length === 0) { full += "\n\n"; continue; }
-
-      tokens.sort((a, b) => (b.y !== a.y) ? (b.y - a.y) : (a.x - b.x));
-
-      const lineThreshold = 2.5;
-      const lines = [];
-      let currentLine = [tokens[0]];
-
-      for (let i = 1; i < tokens.length; i++) {
-        const prev = tokens[i - 1];
-        const cur = tokens[i];
-        if (Math.abs(cur.y - prev.y) <= lineThreshold) currentLine.push(cur);
-        else { lines.push(currentLine); currentLine = [cur]; }
-      }
-      lines.push(currentLine);
-
-      const lineTexts = [];
-      const paragraphBreaks = [];
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].slice().sort((a, b) => a.x - b.x);
-        let lt = "";
-
-        for (let j = 0; j < line.length; j++) {
-          const t = line[j];
-          if (j === 0) lt += t.str;
-          else {
-            const prev = line[j - 1];
-            const gap = t.x - prev.x;
-            if (gap > 8) lt += " ";
-            lt += t.str;
-          }
-        }
-        lineTexts.push(lt.trim());
-
-        if (i < lines.length - 1) {
-          const dy = Math.abs(averageY(lines[i]) - averageY(lines[i + 1]));
-          paragraphBreaks.push(dy);
-        }
-      }
-
-      const paragraphDyThreshold = 12;
-      let pageText = "";
-      for (let i = 0; i < lineTexts.length; i++) {
-        pageText += lineTexts[i] + "\n";
-        if (i < paragraphBreaks.length && paragraphBreaks[i] > paragraphDyThreshold) pageText += "\n";
-      }
-
-      full += pageText.trimEnd() + "\n\n";
-    }
-
-    return normalizeTextForReadability(full);
-  }
-
-  async function oneClickCopy() {
-    if (!pdfJsReady) return setStatus('PDF.js 未就緒（請確認 ./vendor/pdfjs/ 兩個檔案存在）。', 'error');
-    if (!currentPdfUrl) return setStatus('請先查詢並載入 PDF，再使用「一鍵複製」。', 'error');
-
-    const btnCopy = document.getElementById('btnOneClickCopy');
-    const btnPaste = document.getElementById('btnOneClickPaste');
-    btnCopy.disabled = true; btnPaste.disabled = true;
-
-    try {
-      setStatus('開始擷取 PDF 全文（保留段落/換行）…');
-      const text = await extractAllTextFromPdfWithLayout(currentPdfUrl);
-
-      if (!text) return setStatus('擷取結果為空：可能是掃描型 PDF 或文字不可擷取。', 'error');
-
-      extractedPdfText = text;
-
-      try {
-        await navigator.clipboard.writeText(extractedPdfText);
-        setStatus(`一鍵複製完成：已寫入剪貼簿（約 ${extractedPdfText.length} 字）。`, 'ok');
-      } catch {
-        setStatus(`已擷取全文（約 ${extractedPdfText.length} 字），但瀏覽器阻擋寫入剪貼簿。`, 'ok');
-      }
-    } catch (e) {
-      console.error(e);
-      extractedPdfText = "";
-      setStatus(`一鍵複製失敗：${e.message}`, 'error');
-    } finally {
-      btnCopy.disabled = false; btnPaste.disabled = false;
-    }
-  }
-
-  async function oneClickPaste() {
-    if (!pdfJsReady) return setStatus('PDF.js 未就緒（請確認 ./vendor/pdfjs/ 兩個檔案存在）。', 'error');
-    if (!currentPdfUrl) return setStatus('請先查詢並載入 PDF，再使用「一鍵貼上」。', 'error');
-
-    if (!extractedPdfText) {
-      setStatus('尚未擷取全文，先自動擷取…');
-      await oneClickCopy();
-      if (!extractedPdfText) return;
-    }
-
-    document.getElementById('sourceText').value = extractedPdfText;
-    setStatus('一鍵貼上完成：原文已放入右側欄位。接著可按「送到 Google 翻譯（新頁）」。', 'ok');
-  }
-
-  // ✅ 維持「送到 Google 翻譯」作法：開新頁顯示翻譯
-  function openGoogleTranslate() {
-    const src = (document.getElementById('sourceText').value || '').trim();
-    if (!src) return setStatus('請先有原文（可用一鍵貼上）再送到 Google 翻譯。', 'error');
-
-    const tl = document.getElementById('lang').value || 'en';
-    const sl = 'auto';
-
-    // URL 長度限制：過長會失敗；保守截斷並提示使用者分段貼上
-    const MAX_URL_TEXT = 3800;
-    const clipped = src.length > MAX_URL_TEXT;
-    const text = clipped ? src.slice(0, MAX_URL_TEXT) : src;
-
-    const url = new URL('https://translate.google.com/');
-    url.searchParams.set('sl', sl);
-    url.searchParams.set('tl', tl);
-    url.searchParams.set('op', 'translate');
-    url.searchParams.set('text', text);
-
-    window.open(url.toString(), '_blank', 'noopener');
-
-    if (clipped) {
-      setStatus(
-        `已開啟 Google 翻譯新分頁（sl=auto → tl=${tl}）。\n` +
-        `⚠️ 因網址長度限制，只帶入前 ${MAX_URL_TEXT} 字。\n` +
-        `建議：在 Google 翻譯頁面中，把剩餘原文「分段貼上」翻譯。`,
-        'ok'
-      );
-    } else {
-      setStatus(`已開啟 Google 翻譯新分頁（sl=auto → tl=${tl}）。`, 'ok');
-    }
-  }
-
-  function clearAll() {
-    document.getElementById('courseCode').value = '';
-    document.getElementById('pdfFrame').src = '';
-    document.getElementById('meta').textContent = '尚未載入 PDF';
-    document.getElementById('sourceText').value = '';
-    extractedPdfText = '';
-    currentPdfUrl = null;
-    setStatus('');
-  }
-
-  window.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('btnSearch').addEventListener('click', lookup);
-    document.getElementById('btnClear').addEventListener('click', clearAll);
-    document.getElementById('btnOneClickCopy').addEventListener('click', oneClickCopy);
-    document.getElementById('btnOneClickPaste').addEventListener('click', oneClickPaste);
-    document.getElementById('btnOpenGTranslate').addEventListener('click', openGoogleTranslate);
-
-    document.getElementById('courseCode').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') lookup();
-    });
-
-    setOneClickButtonsEnabled(false);
-
-    const timer = setInterval(() => {
-      if (window.pdfjsLib) {
-        clearInterval(timer);
-        try {
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc = "./vendor/pdfjs/pdf.worker.min.js";
-          pdfJsReady = true;
-          setOneClickButtonsEnabled(true);
-          setStatus('PDF.js 已就緒。', 'ok');
-        } catch (e) {
-          console.error(e);
-          pdfJsReady = false;
-          setOneClickButtonsEnabled(false);
-          setStatus('PDF.js 初始化失敗：請確認 ./vendor/pdfjs/pdf.worker.min.js 是否存在。', 'error');
-        }
-      }
-    }, 200);
-
-    setTimeout(() => { if (!pdfJsReady) setOneClickButtonsEnabled(false); }, 3000);
-  });
-</script>
-</body>
-</html>
+      if (isRCode(q)) {
+        rid = q;
+        entry = idx[rid];
+        if (!entry)
