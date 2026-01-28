@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>課綱查詢多語翻譯（R編號 / 選課代碼）</title>
 
-  <!-- 本機 PDF.js -->
+  <!-- 本機 PDF.js（只影響「擷取文字」，不影響 iframe 顯示 PDF） -->
   <script defer src="./vendor/pdfjs/pdf.min.js"></script>
 
   <style>
@@ -22,7 +22,7 @@
     .hint { color: var(--muted); font-size: 13px; line-height: 1.45; }
 
     .topbar { display:flex; gap:10px; flex-wrap: wrap; align-items:center; margin-top: 10px; }
-    input { padding: 10px 12px; font-size: 16px; width: 260px; max-width: 100%; }
+    input { padding: 10px 12px; font-size: 16px; width: 320px; max-width: 100%; }
     button, select { padding: 10px 12px; font-size: 15px; cursor: pointer; }
     button:disabled { opacity: .55; cursor: not-allowed; }
 
@@ -30,9 +30,8 @@
     .status.error { color: #b00020; }
     .status.ok { color: #0b6b0b; }
 
-    main { height: calc(100vh - 140px); }
+    main { height: calc(100vh - 150px); }
 
-    /* 兩欄各占一半：左 PDF、右 原文 */
     .layout{
       display:grid;
       grid-template-columns: 1fr 1fr;
@@ -61,7 +60,6 @@
     }
 
     .card-body{ flex:1; min-height:0; }
-
     iframe{ width:100%; height:100%; border:0; }
 
     textarea{
@@ -83,29 +81,12 @@
       line-height: 1.5;
     }
 
-    .right-actions{
-      display:flex;
-      gap:10px;
-      flex-wrap: wrap;
-      padding:10px 10px 0;
-      align-items:center;
-    }
-
     @media (max-width: 900px) {
       main { height: auto; }
       .layout { grid-template-columns: 1fr; grid-template-rows: auto auto; padding: 10px 12px; }
-      .topbar { gap: 8px; }
       input { width: 100%; }
       #pdfCard .card-body { height: 55vh; }
       #textCard .card-body { height: 55vh; }
-    }
-
-    @media (max-width: 420px) {
-      h2 { font-size: 17px; }
-      button, select { width: 100%; }
-      .topbar { align-items: stretch; }
-      #pdfCard .card-body { height: 50vh; }
-      #textCard .card-body { height: 60vh; }
     }
   </style>
 </head>
@@ -114,7 +95,8 @@
 <header>
   <h2>課綱查詢（PDF）+ Google 翻譯（新頁）</h2>
   <div class="hint">
-    可用 <code>R001</code>（編號）或 <code>0621</code>（4位選課代碼）查詢課綱 PDF，右側可擷取原文並送到 Google 翻譯新分頁。
+    可用 <code>R001</code>（編號）或 <code>0621</code>（4位選課代碼）查詢課綱 PDF。
+    你的 PDF 放在 <code>Syllabi/</code> 目錄下。
   </div>
 
   <div class="topbar">
@@ -141,10 +123,11 @@
     </select>
 
     <button id="btnOpenGTranslate" type="button">一鍵翻譯</button>
+    <button id="btnOpenPdf" type="button" disabled>直接開PDF</button>
   </div>
 
   <div class="mini-hint">
-    建議流程：① 查詢（R編號/選課代碼）② 一鍵貼上 ③ 一鍵翻譯
+    流程：① 輸入 → 查詢 ② 一鍵貼上 ③ 一鍵翻譯
   </div>
 
   <div id="status" class="status"></div>
@@ -152,7 +135,6 @@
 
 <main>
   <div class="layout">
-    <!-- 左：PDF -->
     <div id="pdfCard" class="card">
       <div id="meta" class="card-header">尚未載入 PDF</div>
       <div class="card-body">
@@ -160,14 +142,8 @@
       </div>
     </div>
 
-    <!-- 右：原文（不顯示翻譯結果欄位） -->
     <div id="textCard" class="card">
       <div class="card-header">原文（保留段落/換行）</div>
-      <div class="right-actions">
-        <span class="mini-hint" style="margin:0;">
-          也可直接在此複製與貼上原文，再按「一鍵翻譯」。
-        </span>
-      </div>
       <div class="card-body">
         <textarea id="sourceText" placeholder="可按「一鍵貼上」把課綱擷取進來，也可自行複製貼上原文。"></textarea>
       </div>
@@ -176,85 +152,71 @@
 </main>
 
 <script>
+  // ========= 狀態 =========
   let pdfJsReady = false;
   let indexData = null;
-
-  // 反查表：course_code(4位數) -> [Rxxx...]
   let courseCodeMap = null;
-
   let currentPdfUrl = null;
   let extractedPdfText = "";
 
+  const $ = (id) => document.getElementById(id);
+
   function setStatus(msg, type='') {
-    const el = document.getElementById('status');
+    const el = $('status');
     el.textContent = msg || '';
     el.className = 'status ' + (type || '');
   }
 
   function setOneClickButtonsEnabled(enabled) {
-    document.getElementById('btnOneClickCopy').disabled = !enabled;
-    document.getElementById('btnOneClickPaste').disabled = !enabled;
+    $('btnOneClickCopy').disabled = !enabled;
+    $('btnOneClickPaste').disabled = !enabled;
   }
 
   function normalizeQuery(raw) {
-    const s = (raw || '').trim();
-    if (!s) return '';
-    return s.toUpperCase();
+    return (raw || '').trim().toUpperCase();
   }
 
-  function isRCode(q) {
-    return /^R\d{3,4}$/.test(q);
-  }
+  function isRCode(q) { return /^R\d{3,4}$/.test(q); }
+  function isCourseCode4(q) { return /^\d{4}$/.test(q); }
 
-  function isCourseCode4(q) {
-    return /^\d{4}$/.test(q);
-  }
-
+  // ========= 讀取 index.json =========
   async function loadIndex() {
     if (indexData) return indexData;
 
     const res = await fetch('./index.json', { cache: 'no-store' });
-    if (!res.ok) throw new Error('無法載入 index.json（請確認存在於 repo 根目錄）');
+    if (!res.ok) throw new Error('無法載入 index.json（請確認與 index.html 同層）');
     indexData = await res.json();
 
-    // 建 course_code 反查表（只建一次）
     courseCodeMap = new Map();
     for (const [rid, entry] of Object.entries(indexData)) {
-      const cc = (entry && entry.course_code) ? String(entry.course_code).trim() : '';
+      const cc = entry?.course_code ? String(entry.course_code).trim() : '';
       if (!/^\d{4}$/.test(cc)) continue;
       if (!courseCodeMap.has(cc)) courseCodeMap.set(cc, []);
       courseCodeMap.get(cc).push(rid);
     }
-
     return indexData;
   }
 
   function buildMetaText(rid, entry, queryUsed) {
-    const parts = [];
-
-    // 第一行：中文名 + 英文名
     const zh = entry.title_zh || '';
     const en = entry.title_en || '';
-    parts.push(`${zh}${en ? " / " + en : ""}`.trim() || '（未命名課程）');
-
-    // 第二行：學院/系所/學制
+    const line1 = `${zh}${en ? " / " + en : ""}`.trim() || '（未命名課程）';
     const line2 = [entry.college, entry.department, entry.program].filter(Boolean).join("｜");
-    if (line2) parts.push(line2);
-
-    // 第三行：編號/選課代碼/檔案
     const cc = entry.course_code ? String(entry.course_code).trim() : '';
-    const file = entry.file || '';
     const qNote = queryUsed ? `（查詢：${queryUsed}）` : '';
-    parts.push(`編號：${rid}${cc ? "｜選課代碼：" + cc : ""}${qNote}\n檔案：${file}`);
-
-    return parts.join("\n");
+    const file = entry.file || '';
+    return [
+      line1,
+      line2 || '',
+      `編號：${rid}${cc ? "｜選課代碼：" + cc : ""}${qNote}\n檔案：${file}`
+    ].filter(Boolean).join("\n");
   }
 
+  // ========= 查詢 =========
   async function lookup() {
     try {
-      const inputEl = document.getElementById('courseCode');
-      const q = normalizeQuery(inputEl.value);
-      inputEl.value = q;
+      const q = normalizeQuery($('courseCode').value);
+      $('courseCode').value = q;
 
       if (!q) {
         setStatus('請輸入 R編號（例如 R001）或 4位選課代碼（例如 0621）。', 'error');
@@ -270,4 +232,260 @@
       if (isRCode(q)) {
         rid = q;
         entry = idx[rid];
-        if (!entry)
+        if (!entry) {
+          setStatus(`查無編號 ${rid}（請確認 index.json 是否包含該 key）。`, 'error');
+          return;
+        }
+      } else if (isCourseCode4(q)) {
+        const list = courseCodeMap.get(q);
+        if (!list || list.length === 0) {
+          setStatus(`查無選課代碼 ${q}（請確認 index.json 的 course_code）。`, 'error');
+          return;
+        }
+        rid = list[0];
+        entry = idx[rid];
+        if (list.length > 1) {
+          setStatus(`選課代碼 ${q} 對應多筆：${list.join(", ")}\n目前先開啟：${rid}`, 'ok');
+        }
+      } else {
+        setStatus('格式不正確：請輸入 R001（R+3~4位數字）或 4位選課代碼（例如 0621）。', 'error');
+        return;
+      }
+
+      if (!entry?.file) {
+        setStatus(`資料不完整：${rid} 缺少 file 欄位。`, 'error');
+        return;
+      }
+
+      // 用 encodeURI 處理空格與中文（空格會變 %20）
+      const filePath = encodeURI(entry.file);
+
+      currentPdfUrl = filePath;
+      extractedPdfText = "";
+
+      $('pdfFrame').src = filePath;
+      $('meta').textContent = buildMetaText(rid, entry, q);
+
+      $('btnOpenPdf').disabled = false;
+      $('btnOpenPdf').onclick = () => window.open(filePath, '_blank', 'noopener');
+
+      // 顯示「準備開啟的 URL」方便你一眼排除路徑問題
+      setStatus(
+        `✅ 已設定 PDF：\n${location.origin + location.pathname.replace(/[^/]+$/, '') + filePath}\n\n` +
+        (pdfJsReady ? 'PDF.js 已就緒，可使用一鍵複製。' : 'PDF.js 尚未就緒（不影響顯示 PDF）。'),
+        'ok'
+      );
+    } catch (err) {
+      console.error(err);
+      setStatus(`發生錯誤：${err.message}\n（請開 F12 Console 看詳細錯誤）`, 'error');
+    }
+  }
+
+  function clearAll() {
+    $('courseCode').value = '';
+    $('pdfFrame').src = '';
+    $('meta').textContent = '尚未載入 PDF';
+    $('sourceText').value = '';
+    extractedPdfText = '';
+    currentPdfUrl = null;
+    $('btnOpenPdf').disabled = true;
+    setStatus('已清除。', 'ok');
+  }
+
+  // ========= Google 翻譯（新頁） =========
+  function openGoogleTranslate() {
+    const src = ($('sourceText').value || '').trim();
+    if (!src) return setStatus('請先有原文（可用一鍵貼上）再送到 Google 翻譯。', 'error');
+
+    const tl = $('lang').value || 'en';
+    const sl = 'auto';
+
+    const MAX_URL_TEXT = 3800;
+    const clipped = src.length > MAX_URL_TEXT;
+    const text = clipped ? src.slice(0, MAX_URL_TEXT) : src;
+
+    const url = new URL('https://translate.google.com/');
+    url.searchParams.set('sl', sl);
+    url.searchParams.set('tl', tl);
+    url.searchParams.set('op', 'translate');
+    url.searchParams.set('text', text);
+
+    window.open(url.toString(), '_blank', 'noopener');
+
+    setStatus(
+      clipped
+        ? `已開啟 Google 翻譯新分頁（tl=${tl}）。\n⚠️ 因網址長度限制只帶入前 ${MAX_URL_TEXT} 字，剩餘請分段貼上。`
+        : `已開啟 Google 翻譯新分頁（tl=${tl}）。`,
+      'ok'
+    );
+  }
+
+  // ========= PDF 文字擷取（PDF.js） =========
+  function normalizeTextForReadability(text) {
+    return (text || '')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n[ \t]+/g, '\n')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function averageY(lineTokens) {
+    const sum = lineTokens.reduce((acc, t) => acc + t.y, 0);
+    return sum / Math.max(1, lineTokens.length);
+  }
+
+  async function extractAllTextFromPdfWithLayout(pdfUrl) {
+    const absUrl = new URL(pdfUrl, window.location.href).href;
+    const loadingTask = window.pdfjsLib.getDocument({ url: absUrl });
+    const pdf = await loadingTask.promise;
+
+    let full = "";
+    for (let p = 1; p <= pdf.numPages; p++) {
+      setStatus(`擷取 PDF 文字中…（第 ${p}/${pdf.numPages} 頁）`);
+      const page = await pdf.getPage(p);
+      const tc = await page.getTextContent();
+
+      const tokens = tc.items
+        .filter(it => (it.str || '').trim().length > 0 && it.transform && it.transform.length >= 6)
+        .map(it => ({ str: it.str, x: it.transform[4], y: it.transform[5] }));
+
+      if (tokens.length === 0) { full += "\n\n"; continue; }
+
+      tokens.sort((a, b) => (b.y !== a.y) ? (b.y - a.y) : (a.x - b.x));
+
+      const lineThreshold = 2.5;
+      const lines = [];
+      let currentLine = [tokens[0]];
+
+      for (let i = 1; i < tokens.length; i++) {
+        const prev = tokens[i - 1];
+        const cur = tokens[i];
+        if (Math.abs(cur.y - prev.y) <= lineThreshold) currentLine.push(cur);
+        else { lines.push(currentLine); currentLine = [cur]; }
+      }
+      lines.push(currentLine);
+
+      const lineTexts = [];
+      const paragraphBreaks = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].slice().sort((a, b) => a.x - b.x);
+        let lt = "";
+        for (let j = 0; j < line.length; j++) {
+          const t = line[j];
+          if (j === 0) lt += t.str;
+          else {
+            const prev = line[j - 1];
+            const gap = t.x - prev.x;
+            if (gap > 8) lt += " ";
+            lt += t.str;
+          }
+        }
+        lineTexts.push(lt.trim());
+        if (i < lines.length - 1) {
+          const dy = Math.abs(averageY(lines[i]) - averageY(lines[i + 1]));
+          paragraphBreaks.push(dy);
+        }
+      }
+
+      const paragraphDyThreshold = 12;
+      let pageText = "";
+      for (let i = 0; i < lineTexts.length; i++) {
+        pageText += lineTexts[i] + "\n";
+        if (i < paragraphBreaks.length && paragraphBreaks[i] > paragraphDyThreshold) pageText += "\n";
+      }
+
+      full += pageText.trimEnd() + "\n\n";
+    }
+
+    return normalizeTextForReadability(full);
+  }
+
+  async function oneClickCopy() {
+    if (!pdfJsReady) return setStatus('PDF.js 未就緒（請確認 ./vendor/pdfjs/ 檔案存在）。', 'error');
+    if (!currentPdfUrl) return setStatus('請先查詢並載入 PDF，再使用「一鍵複製」。', 'error');
+
+    $('btnOneClickCopy').disabled = true;
+    $('btnOneClickPaste').disabled = true;
+
+    try {
+      const text = await extractAllTextFromPdfWithLayout(currentPdfUrl);
+      if (!text) return setStatus('擷取結果為空：可能是掃描型 PDF 或文字不可擷取。', 'error');
+
+      extractedPdfText = text;
+      try {
+        await navigator.clipboard.writeText(extractedPdfText);
+        setStatus(`一鍵複製完成：已寫入剪貼簿（約 ${extractedPdfText.length} 字）。`, 'ok');
+      } catch {
+        setStatus(`已擷取全文（約 ${extractedPdfText.length} 字），但瀏覽器阻擋寫入剪貼簿。`, 'ok');
+      }
+    } catch (e) {
+      console.error(e);
+      extractedPdfText = "";
+      setStatus(`一鍵複製失敗：${e.message}`, 'error');
+    } finally {
+      $('btnOneClickCopy').disabled = false;
+      $('btnOneClickPaste').disabled = false;
+    }
+  }
+
+  async function oneClickPaste() {
+    if (!pdfJsReady) return setStatus('PDF.js 未就緒（請確認 ./vendor/pdfjs/ 檔案存在）。', 'error');
+    if (!currentPdfUrl) return setStatus('請先查詢並載入 PDF，再使用「一鍵貼上」。', 'error');
+
+    if (!extractedPdfText) {
+      setStatus('尚未擷取全文，先自動擷取…');
+      await oneClickCopy();
+      if (!extractedPdfText) return;
+    }
+    $('sourceText').value = extractedPdfText;
+    setStatus('一鍵貼上完成。', 'ok');
+  }
+
+  // ========= 啟動 =========
+  window.addEventListener('DOMContentLoaded', async () => {
+    // 綁定事件（如果你原本版本少了這段，就會造成你說的「永遠尚未載入PDF」）
+    $('btnSearch').addEventListener('click', lookup);
+    $('btnClear').addEventListener('click', clearAll);
+    $('btnOpenGTranslate').addEventListener('click', openGoogleTranslate);
+    $('btnOneClickCopy').addEventListener('click', oneClickCopy);
+    $('btnOneClickPaste').addEventListener('click', oneClickPaste);
+
+    $('courseCode').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') lookup();
+    });
+
+    // 初始：PDF.js 尚未就緒，先鎖住一鍵複製/貼上
+    setOneClickButtonsEnabled(false);
+    $('btnOpenPdf').disabled = true;
+
+    // 頁面自檢：確認 index.json 可讀、顯示筆數
+    try {
+      const idx = await loadIndex();
+      setStatus(`✅ JS 已載入；index.json 讀取成功（共 ${Object.keys(idx).length} 筆）。\n請輸入 R001 或 0621 後按「查詢」。`, 'ok');
+    } catch (e) {
+      console.error(e);
+      setStatus(`❌ index.json 讀取失敗：${e.message}`, 'error');
+    }
+
+    // PDF.js 就緒檢查（只影響擷取功能）
+    const timer = setInterval(() => {
+      if (window.pdfjsLib) {
+        clearInterval(timer);
+        try {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = "./vendor/pdfjs/pdf.worker.min.js";
+          pdfJsReady = true;
+          setOneClickButtonsEnabled(true);
+          // 不覆蓋前面已顯示的 index.json 成功訊息
+        } catch (e) {
+          console.error(e);
+          pdfJsReady = false;
+          setOneClickButtonsEnabled(false);
+        }
+      }
+    }, 200);
+  });
+</script>
+</body>
+</html>
