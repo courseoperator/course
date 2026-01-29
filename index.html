@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>課綱查詢多語翻譯（R編號 / 選課代碼）</title>
+  <title>課綱翻譯 Syllabus translation（R + 3 digits）</title>
 
   <!-- 本機 PDF.js（只影響「擷取文字」，不影響 iframe 顯示 PDF） -->
   <script defer src="./vendor/pdfjs/pdf.min.js"></script>
@@ -93,23 +93,22 @@
 
 <body>
 <header>
-  <h2>課綱查詢（PDF）+ Google 翻譯（新頁）</h2>
+  <h2>課綱查詢（Syllabus translation）</h2>
   <div class="hint">
-    可用 <code>R001</code>（編號）或 <code>0621</code>（4位選課代碼）查詢課綱 PDF。
+    請用 <code>R001</code>（編號）查詢。
     你的 PDF 放在 <code>Syllabi/</code> 目錄下。
   </div>
 
   <div class="topbar">
-    <input id="courseCode" placeholder="輸入 R001 或 4位選課代碼（例如 0621）" />
-    <button id="btnSearch" type="button">查詢</button>
-    <button id="btnClear" type="button">清除</button>
+    <input id="courseCode" placeholder="輸入 R+3 digits (ie. R001)" />
+    <button id="btnSearch" type="button">查詢/Search</button>
+    <button id="btnClear" type="button">清除/Reset</button>
 
     <span style="flex:1"></span>
 
-    <button id="btnOneClickCopy" type="button">一鍵複製</button>
-    <button id="btnOneClickPaste" type="button">一鍵貼上</button>
-
-    <label for="lang">語言</label>
+    <button id="btnOneClickCopy" type="button">一鍵複製/Copy</button>
+    <button id="btnOneClickPaste" type="button">一鍵貼上/Paste</button>
+    <label for="lang">語言/Language</label>
     <select id="lang">
       <option value="en">English</option>
       <option value="ja">日本語</option>
@@ -122,8 +121,7 @@
       <option value="de">Deutsch</option>
     </select>
 
-    <button id="btnOpenGTranslate" type="button">一鍵翻譯</button>
-    <button id="btnOpenPdf" type="button" disabled>直接開PDF</button>
+    <button id="btnOpenGTranslate" type="button">一鍵翻譯/Translate</button>
   </div>
 
   <div class="mini-hint">
@@ -145,7 +143,7 @@
     <div id="textCard" class="card">
       <div class="card-header">原文（保留段落/換行）</div>
       <div class="card-body">
-        <textarea id="sourceText" placeholder="可按「一鍵貼上」把課綱擷取進來，也可自行複製貼上原文。"></textarea>
+        <textarea id="sourceText" placeholder="請按「一鍵貼上」擷取課綱，也可自行複製貼上原文。"></textarea>
       </div>
     </div>
   </div>
@@ -266,12 +264,8 @@
       $('pdfFrame').src = filePath;
       $('meta').textContent = buildMetaText(rid, entry, q);
 
-      $('btnOpenPdf').disabled = false;
-      $('btnOpenPdf').onclick = () => window.open(filePath, '_blank', 'noopener');
-
-      // 顯示「準備開啟的 URL」方便你一眼排除路徑問題
       setStatus(
-        `✅ 已設定 PDF：\n${location.origin + location.pathname.replace(/[^/]+$/, '') + filePath}\n\n` +
+        `✅ 已載入：${rid}（${entry.title_zh || ''}）\n` +
         (pdfJsReady ? 'PDF.js 已就緒，可使用一鍵複製。' : 'PDF.js 尚未就緒（不影響顯示 PDF）。'),
         'ok'
       );
@@ -288,7 +282,6 @@
     $('sourceText').value = '';
     extractedPdfText = '';
     currentPdfUrl = null;
-    $('btnOpenPdf').disabled = true;
     setStatus('已清除。', 'ok');
   }
 
@@ -445,7 +438,6 @@
 
   // ========= 啟動 =========
   window.addEventListener('DOMContentLoaded', async () => {
-    // 綁定事件（如果你原本版本少了這段，就會造成你說的「永遠尚未載入PDF」）
     $('btnSearch').addEventListener('click', lookup);
     $('btnClear').addEventListener('click', clearAll);
     $('btnOpenGTranslate').addEventListener('click', openGoogleTranslate);
@@ -456,11 +448,8 @@
       if (e.key === 'Enter') lookup();
     });
 
-    // 初始：PDF.js 尚未就緒，先鎖住一鍵複製/貼上
     setOneClickButtonsEnabled(false);
-    $('btnOpenPdf').disabled = true;
 
-    // 頁面自檢：確認 index.json 可讀、顯示筆數
     try {
       const idx = await loadIndex();
       setStatus(`✅ JS 已載入；index.json 讀取成功（共 ${Object.keys(idx).length} 筆）。\n請輸入 R001 或 0621 後按「查詢」。`, 'ok');
@@ -469,7 +458,6 @@
       setStatus(`❌ index.json 讀取失敗：${e.message}`, 'error');
     }
 
-    // PDF.js 就緒檢查（只影響擷取功能）
     const timer = setInterval(() => {
       if (window.pdfjsLib) {
         clearInterval(timer);
@@ -477,7 +465,6 @@
           window.pdfjsLib.GlobalWorkerOptions.workerSrc = "./vendor/pdfjs/pdf.worker.min.js";
           pdfJsReady = true;
           setOneClickButtonsEnabled(true);
-          // 不覆蓋前面已顯示的 index.json 成功訊息
         } catch (e) {
           console.error(e);
           pdfJsReady = false;
