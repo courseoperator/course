@@ -216,7 +216,7 @@
       $('courseCode').value = q;
 
       if (!q) {
-        setStatus('請輸入 R編號（例如 R001）或 4位選課代碼（例如 0621）。', 'error');
+        setStatus('請輸入 R編號（例如 R001）。', 'error');
         return;
       }
 
@@ -451,7 +451,7 @@
 
     try {
       const idx = await loadIndex();
-      setStatus(`✅ JS 已載入；index.json 讀取成功（共 ${Object.keys(idx).length} 筆）。\n請輸入 R001 或 0621 後按「查詢」。`, 'ok');
+      setStatus(`✅ 讀取成功。`, 'ok');
     } catch (e) {
       console.error(e);
       setStatus(`❌ index.json 讀取失敗：${e.message}`, 'error');
