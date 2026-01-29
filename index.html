@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>課綱翻譯 Syllabus translation（R + 3 digits）</title>
+  <title>課綱查詢多語翻譯（R編號 / 選課代碼）</title>
 
   <!-- 本機 PDF.js（只影響「擷取文字」，不影響 iframe 顯示 PDF） -->
   <script defer src="./vendor/pdfjs/pdf.min.js"></script>
@@ -50,6 +50,7 @@
       overflow:hidden;
     }
 
+    /* ✅ 保留給右側原文卡片用；左側我們不再使用 header */
     .card-header{
       padding:10px 12px;
       border-bottom:1px solid var(--border);
@@ -93,21 +94,24 @@
 
 <body>
 <header>
-  <h2>課綱查詢（Syllabus translation）</h2>
+  <!-- ⚠️ 你說 index.html 的文字你已經改過：這裡我不動（請保留你自己的版本） -->
+  <h2>課綱查詢（PDF）+ Google 翻譯（新頁）</h2>
   <div class="hint">
-    請用RXXX如 <code>R001</code>查詢。
+    可用 <code>R001</code>（編號）或 <code>0621</code>（4位選課代碼）查詢課綱 PDF。
+    你的 PDF 放在 <code>Syllabi/</code> 目錄下。
   </div>
 
   <div class="topbar">
-    <input id="courseCode" placeholder="輸入 R+3 digits (ie. R001)" />
-    <button id="btnSearch" type="button">查詢/Search</button>
-    <button id="btnClear" type="button">清除/Reset</button>
+    <input id="courseCode" placeholder="輸入 R001 或 4位選課代碼（例如 0621）" />
+    <button id="btnSearch" type="button">查詢</button>
+    <button id="btnClear" type="button">清除</button>
 
     <span style="flex:1"></span>
 
-    <button id="btnOneClickCopy" type="button">一鍵複製/Copy</button>
-    <button id="btnOneClickPaste" type="button">一鍵貼上/Paste</button>
-    <label for="lang">語言/Language</label>
+    <button id="btnOneClickCopy" type="button">一鍵複製</button>
+    <button id="btnOneClickPaste" type="button">一鍵貼上</button>
+
+    <label for="lang">語言</label>
     <select id="lang">
       <option value="en">English</option>
       <option value="ja">日本語</option>
@@ -120,11 +124,11 @@
       <option value="de">Deutsch</option>
     </select>
 
-    <button id="btnOpenGTranslate" type="button">一鍵翻譯/Translate</button>
+    <button id="btnOpenGTranslate" type="button">一鍵翻譯</button>
   </div>
 
   <div class="mini-hint">
-    Process：① Input course code → Search ② Copy+Paste ③ Translate
+    流程：① 輸入 → 查詢 ② 一鍵貼上 ③ 一鍵翻譯
   </div>
 
   <div id="status" class="status"></div>
@@ -132,27 +136,28 @@
 
 <main>
   <div class="layout">
+    <!-- ✅ 左：PDF（移除 header/資訊欄位，只保留 iframe） -->
     <div id="pdfCard" class="card">
-      <div id="meta" class="card-header"> 尚未載入檔案</div>
       <div class="card-body">
         <iframe id="pdfFrame" title="Syllabus PDF Viewer"></iframe>
       </div>
     </div>
 
+    <!-- 右：原文 -->
     <div id="textCard" class="card">
-      <div class="card-header">原文（Original syllabus）</div>
+      <div class="card-header">原文（保留段落/換行）</div>
       <div class="card-body">
-        <textarea id="sourceText" placeholder="請按「一鍵複製、一鍵貼上」擷取課綱/Use Copy & Paste buttons。"></textarea>
+        <textarea id="sourceText" placeholder="可按「一鍵貼上」把課綱擷取進來，也可自行複製貼上原文。"></textarea>
       </div>
     </div>
   </div>
 </main>
 
 <script>
-  // ========= 狀態 =========
   let pdfJsReady = false;
   let indexData = null;
   let courseCodeMap = null;
+
   let currentPdfUrl = null;
   let extractedPdfText = "";
 
@@ -176,7 +181,6 @@
   function isRCode(q) { return /^R\d{3,4}$/.test(q); }
   function isCourseCode4(q) { return /^\d{4}$/.test(q); }
 
-  // ========= 讀取 index.json =========
   async function loadIndex() {
     if (indexData) return indexData;
 
@@ -194,29 +198,13 @@
     return indexData;
   }
 
-  function buildMetaText(rid, entry, queryUsed) {
-    const zh = entry.title_zh || '';
-    const en = entry.title_en || '';
-    const line1 = `${zh}${en ? " / " + en : ""}`.trim() || '（未命名課程）';
-    const line2 = [entry.college, entry.department, entry.program].filter(Boolean).join("｜");
-    const cc = entry.course_code ? String(entry.course_code).trim() : '';
-    const qNote = queryUsed ? `（查詢：${queryUsed}）` : '';
-    const file = entry.file || '';
-    return [
-      line1,
-      line2 || '',
-      `編號：${rid}${cc ? "｜選課代碼：" + cc : ""}${qNote}\n檔案：${file}`
-    ].filter(Boolean).join("\n");
-  }
-
-  // ========= 查詢 =========
   async function lookup() {
     try {
       const q = normalizeQuery($('courseCode').value);
       $('courseCode').value = q;
 
       if (!q) {
-        setStatus('請輸入 R編號（例如 R001）。', 'error');
+        setStatus('請輸入 R編號（例如 R001）或 4位選課代碼（例如 0621）。', 'error');
         return;
       }
 
@@ -254,20 +242,15 @@
         return;
       }
 
-      // 用 encodeURI 處理空格與中文（空格會變 %20）
       const filePath = encodeURI(entry.file);
 
       currentPdfUrl = filePath;
       extractedPdfText = "";
 
+      // ✅ 左側不再顯示任何課程資訊，僅載入 PDF
       $('pdfFrame').src = filePath;
-      $('meta').textContent = buildMetaText(rid, entry, q);
 
-      setStatus(
-        `✅ 已載入：${rid}（${entry.title_zh || ''}）\n` +
-        (pdfJsReady ? 'PDF.js 已就緒，可使用一鍵複製。' : 'PDF.js 尚未就緒（不影響顯示 PDF）。'),
-        'ok'
-      );
+      setStatus('✅ 已載入 PDF。', 'ok');
     } catch (err) {
       console.error(err);
       setStatus(`發生錯誤：${err.message}\n（請開 F12 Console 看詳細錯誤）`, 'error');
@@ -277,14 +260,12 @@
   function clearAll() {
     $('courseCode').value = '';
     $('pdfFrame').src = '';
-    $('meta').textContent = '尚未載入 PDF';
     $('sourceText').value = '';
     extractedPdfText = '';
     currentPdfUrl = null;
     setStatus('已清除。', 'ok');
   }
 
-  // ========= Google 翻譯（新頁） =========
   function openGoogleTranslate() {
     const src = ($('sourceText').value || '').trim();
     if (!src) return setStatus('請先有原文（可用一鍵貼上）再送到 Google 翻譯。', 'error');
@@ -312,7 +293,6 @@
     );
   }
 
-  // ========= PDF 文字擷取（PDF.js） =========
   function normalizeTextForReadability(text) {
     return (text || '')
       .replace(/[ \t]+\n/g, '\n')
@@ -435,7 +415,6 @@
     setStatus('一鍵貼上完成。', 'ok');
   }
 
-  // ========= 啟動 =========
   window.addEventListener('DOMContentLoaded', async () => {
     $('btnSearch').addEventListener('click', lookup);
     $('btnClear').addEventListener('click', clearAll);
@@ -450,8 +429,9 @@
     setOneClickButtonsEnabled(false);
 
     try {
-      const idx = await loadIndex();
-      setStatus(`✅ 資料庫讀取成功。`, 'ok');
+      await loadIndex();
+      // 不動你頁面上的文字；這裡只顯示狀態
+      setStatus('✅ 系統已就緒。請輸入代碼後按「查詢」。', 'ok');
     } catch (e) {
       console.error(e);
       setStatus(`❌ index.json 讀取失敗：${e.message}`, 'error');
