@@ -430,7 +430,7 @@
     try {
       await loadIndex();
       // 不動你頁面上的文字；這裡只顯示狀態
-      setStatus('✅ 系統已就緒。請輸入課程編號後按「查詢」。', 'ok');
+      setStatus('網頁課程資訊僅供參考，請以課程實際說明為主/The web information is the reference for course selection only. Please refer to the explanations in class for up-to-date information.。', 'ok');
     } catch (e) {
       console.error(e);
       setStatus(`❌ index.json 讀取失敗：${e.message}`, 'error');
