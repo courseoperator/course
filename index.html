@@ -261,6 +261,19 @@
       $('pdfFrame').src = filePath;
 
       setStatus('✅ 已載入 PDF。', 'ok');
+
+      // ===== GA4：記錄查詢行為（成功）=====
+if (typeof gtag === 'function') {
+  gtag('event', 'search_course', {
+    search_term: q,              // 使用者輸入（R001 / 0621）
+    course_id: rid,              // 實際使用的 R 編號
+    course_code: entry.course_code || '',
+    page_location: location.href
+  });
+}
+
+
+      
     } catch (err) {
       console.error(err);
       setStatus(`發生錯誤：${err.message}\n（請開 F12 Console 看詳細錯誤）`, 'error');
